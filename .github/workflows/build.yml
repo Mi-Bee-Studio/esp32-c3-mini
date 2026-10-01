@@ -63,15 +63,19 @@ jobs:
           path: firmware/
 
       # blink ships the OTA dual-slot layout: app offset 0x20000
+      # ESP32-S3 bootloader offset is 0x0
       - name: Create Flash Scripts
         run: |
           cat > flash_blink.sh << 'SCRIPT'
           #!/bin/bash
-          # blink (ESP32-S3-Mini) flash script
+          # blink (ESP32-S3-Mini / Lolin S3 Mini) flash script
           # Usage: ./flash_blink.sh /dev/ttyACM0
           PORT=${1:-/dev/ttyACM0}
           echo "Flashing blink firmware to $PORT..."
-          esptool.py --chip esp32s3 -p "$PORT" -b 460800 --before default_reset --after hard_reset write_flash             0x0 firmware/blink_bootloader.bin             0x8000 firmware/blink_partition_table.bin             0x20000 firmware/blink_firmware.bin
+          esptool.py --chip esp32s3 -p "$PORT" -b 460800 --before default_reset --after hard_reset write_flash \
+            0x0 firmware/blink_bootloader.bin \
+            0x8000 firmware/blink_partition_table.bin \
+            0x20000 firmware/blink_firmware.bin
           echo "Done! Reset the device to start."
           SCRIPT
           chmod +x flash_blink.sh
@@ -81,7 +85,7 @@ jobs:
           set PORT=%1
           if "%PORT%"=="" set PORT=COM3
           echo Flashing blink firmware to %PORT%...
-          esptool.py --chip esp32s3 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash 0x0 firmwarelink_bootloader.bin 0x8000 firmwarelink_partition_table.bin 0x20000 firmwarelink_firmware.bin
+          esptool.py --chip esp32s3 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash 0x0 firmware\blink_bootloader.bin 0x8000 firmware\blink_partition_table.bin 0x20000 firmware\blink_firmware.bin
           echo Done! Reset the device to start.
           SCRIPT
 
@@ -94,9 +98,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ASSETS="firmware/blink_bootloader.bin             firmware/blink_partition_table.bin             firmware/blink_firmware.bin             flash_blink.sh             flash_blink.bat             checksums.txt"
+          ASSETS="firmware/blink_bootloader.bin \
+            firmware/blink_partition_table.bin \
+            firmware/blink_firmware.bin \
+            flash_blink.sh \
+            flash_blink.bat \
+            checksums.txt"
           if gh release view ${{ github.ref_name }} > /dev/null 2>&1; then
             gh release upload ${{ github.ref_name }} $ASSETS --clobber
           else
-            gh release create ${{ github.ref_name }}               $ASSETS               --title "ESP32-S3-Mini Firmware ${{ github.ref_name }}"               --notes-file <(echo "Drag-flash per the README. OTA dual-slot: app @ 0x20000 — first flash needs bootloader + partition table + app (the scripts do all three).")
+            gh release create ${{ github.ref_name }} \
+              $ASSETS \
+              --title "ESP32-S3-Mini Firmware ${{ github.ref_name }}" \
+              --notes-file <(echo "OTA dual-slot: app @ 0x20000, bootloader @ 0x0 (ESP32-S3). First flash needs bootloader + partition table + app (the scripts do all three).")
           fi
