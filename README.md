@@ -4,6 +4,8 @@
 
 [![Build Firmware](https://github.com/Mi-Bee-Studio/esp32-c3-mini/actions/workflows/build.yml/badge.svg)](https://github.com/Mi-Bee-Studio/esp32-c3-mini/actions/workflows/build.yml)
 
+<img src="docs/images/esp32-c3-mini.jpg" alt="Lolin C3 Mini" width="420">
+
 A board under the board-centric repo convention. **This repo is organized with the board as root:**
 
 ```
