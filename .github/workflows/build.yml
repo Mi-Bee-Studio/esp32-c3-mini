@@ -8,7 +8,7 @@ on:
     branches: [main, master]
 
 env:
-  TARGET: esp32s3
+  TARGET: esp32c3
 
 jobs:
   build:
@@ -63,7 +63,7 @@ jobs:
           path: firmware/
 
       # blink ships the OTA dual-slot layout: app offset 0x20000
-      # ESP32-S3 bootloader offset is 0x0
+      # ESP32-C3 bootloader offset is 0x0
       - name: Create Flash Scripts
         run: |
           cat > flash_blink.sh << 'SCRIPT'
@@ -72,7 +72,7 @@ jobs:
           # Usage: ./flash_blink.sh /dev/ttyACM0
           PORT=${1:-/dev/ttyACM0}
           echo "Flashing blink firmware to $PORT..."
-          esptool.py --chip esp32s3 -p "$PORT" -b 460800 --before default_reset --after hard_reset write_flash \
+          esptool.py --chip esp32c3 -p "$PORT" -b 460800 --before default_reset --after hard_reset write_flash \
             0x0 firmware/blink_bootloader.bin \
             0x8000 firmware/blink_partition_table.bin \
             0x20000 firmware/blink_firmware.bin
@@ -85,7 +85,7 @@ jobs:
           set PORT=%1
           if "%PORT%"=="" set PORT=COM3
           echo Flashing blink firmware to %PORT%...
-          esptool.py --chip esp32s3 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash 0x0 firmware\blink_bootloader.bin 0x8000 firmware\blink_partition_table.bin 0x20000 firmware\blink_firmware.bin
+          esptool.py --chip esp32c3 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash 0x0 firmware\blink_bootloader.bin 0x8000 firmware\blink_partition_table.bin 0x20000 firmware\blink_firmware.bin
           echo Done! Reset the device to start.
           SCRIPT
 
@@ -109,6 +109,6 @@ jobs:
           else
             gh release create ${{ github.ref_name }} \
               $ASSETS \
-              --title "ESP32-S3-Mini Firmware ${{ github.ref_name }}" \
-              --notes-file <(echo "OTA dual-slot: app @ 0x20000, bootloader @ 0x0 (ESP32-S3). First flash needs bootloader + partition table + app (the scripts do all three).")
+              --title "ESP32-C3-Mini Firmware ${{ github.ref_name }}" \
+              --notes-file <(echo "OTA dual-slot: app @ 0x20000, bootloader @ 0x0 (ESP32-C3). First flash needs bootloader + partition table + app (the scripts do all three).")
           fi

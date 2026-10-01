@@ -22,8 +22,8 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
-#define APP_FW_VERSION "blink-s3m v1-webota"
-#define AP_SSID "blink-s3m"
+#define APP_FW_VERSION "blink-c3m v1-webota"
+#define AP_SSID "blink-c3m"
 
 static const char *TAG = "web";
 static httpd_handle_t s_server;

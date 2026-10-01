@@ -1,10 +1,8 @@
-## blink — ESP32-S3-Mini（Lolin S3 Mini）基线工程（测试固件）
-# 板级信息见 ../README.md；模组 ESP32-S3FH4R2（4MB flash + 2MB Octal PSRAM
-# 片内封装）。PSRAM 本仓未实测——启用前先真机验证（教训见 esp32-s3-zero
-# 根 README 的 PSRAM 段），故先 CONFIG_SPIRAM=n
-CONFIG_IDF_TARGET="esp32s3"
+## blink — ESP32-C3-Mini（Lolin C3 Mini）基线工程（测试固件）
+# 板级信息见 ../README.zh.md；芯片 ESP32-C3FH4（4MB flash 片内封装），无 PSRAM
+CONFIG_IDF_TARGET="esp32c3"
 
-# 控制台走原生 USB-Serial-JTAG（S3 原生 USB OTG，无 USB-UART 桥）
+# 控制台走原生 USB-Serial-JTAG（本板无 USB-UART 桥）
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
@@ -14,5 +12,6 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # 任务看门狗超时触发 panic 重启（主循环 1s 一拍喂狗）
 CONFIG_ESP_TASK_WDT_PANIC=y
 
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+# C3 单核 RISC-V 满频 160MHz
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 CONFIG_FREERTOS_HZ=1000

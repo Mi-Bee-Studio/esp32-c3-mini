@@ -1,11 +1,11 @@
 /*
- * blink — ESP32-S3-Mini（Lolin S3 Mini）基线工程（测试固件）。
+ * blink — ESP32-C3-Mini（Lolin C3 Mini）基线工程（测试固件）。
  *
- * 板载 WS2812 RGB（GPIO47）每秒步进一种颜色；每 10 秒一条心跳日志
- * （uptime/heap），供 serialtap 持续采集验证。同构拷贝自
- * esp32-s3-zero/blink（共性先拷贝规范）：颜色沿用本工作区状态语义
- * 绿=正常、琥珀=注意、蓝=跟踪中、暗=空闲。本板 BOOT 键 GPIO 未在
- * 官方页文档化，故不做按键交互（纯自动轮换）。
+ * 板载 WS2812 RGB（GPIO7，Arduino 官方板级定义 PIN_RGB_LED=7）每秒步进
+ * 一种颜色；BOOT 键（GPIO9，C3 标配 strapping）按住显示白色（交互自检），
+ * 松开恢复颜色轮换；每 10 秒一条心跳日志（uptime/heap），供 serialtap
+ * 持续采集验证。同构拷贝自 esp32-s3-zero/blink（共性先拷贝规范）：
+ * 颜色沿用本工作区状态语义 绿=正常、琥珀=注意、蓝=跟踪中、暗=空闲。
  */
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
@@ -14,12 +14,14 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
+#include "driver/gpio.h"
 #include "led_strip.h"
 #include "app_web.h"
 
 static const char *TAG = "BLINK";
 
-#define WS2812_GPIO GPIO_NUM_47
+#define WS2812_GPIO GPIO_NUM_7
+#define BOOT_GPIO   GPIO_NUM_9
 
 typedef struct { uint8_t r, g, b; const char *name; } color_t;
 static const color_t PALETTE[] = {
@@ -44,8 +46,26 @@ static void led_set(int idx)
     ESP_LOGI(TAG, "LED %s", c->name);
 }
 
+static void led_white(void)
+{
+    led_strip_set_pixel(s_led, 0, 200, 200, 200);
+    led_strip_refresh(s_led);
+}
+
+static bool boot_pressed(void)
+{
+    return gpio_get_level(BOOT_GPIO) == 0; // 按下接地
+}
+
 void app_main(void)
 {
+    const gpio_config_t btn = {
+        .pin_bit_mask = 1ULL << BOOT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&btn));
+
     led_strip_config_t strip = {
         .strip_gpio_num = WS2812_GPIO,
         .max_leds = 1,
@@ -59,10 +79,9 @@ void app_main(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip, &rmt, &s_led));
     led_strip_clear(s_led);
 
-    ESP_LOGI(TAG, "blink ready: ws2812=GPIO%d heap=%uK psram=%uK",
-             WS2812_GPIO,
-             (unsigned)(esp_get_free_heap_size() / 1024),
-             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+    ESP_LOGI(TAG, "blink ready: ws2812=GPIO%d boot=GPIO%d heap=%uK",
+             WS2812_GPIO, BOOT_GPIO,
+             (unsigned)(esp_get_free_heap_size() / 1024));
 
     /* 板端维护页 :80（WiFi 配网 / OTA 刷机 / 状态），自带 APSTA 热点兜底 */
     app_web_init();
@@ -82,6 +101,11 @@ void app_main(void)
     int beat = 0;
     while (true) {
         esp_task_wdt_reset();
+        if (boot_pressed()) {
+            led_white(); // 按住 BOOT 显示白色（交互自检）
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
         s_color_idx++;
         led_set(s_color_idx);
