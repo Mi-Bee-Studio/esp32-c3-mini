@@ -32,6 +32,7 @@ esp32-c3-mini/
 | 项目 | 看门狗 | Web/API OTA |
 |------|--------|-------------|
 | blink | ✅ 任务订阅 TWDT（5s panic） | ✅ OTA 双槽 + `POST /ota` 流式写槽 |
+| weather-clock | ✅ 任务订阅 TWDT（5s panic） | ✅ OTA 双槽 + `POST /ota` 流式写槽 |
 
 ---
 
@@ -84,3 +85,4 @@ esp32-c3-mini/
 | 项目 | 说明 |
 |------|------|
 | [blink](blink/README.zh.md) | 基线工程/测试固件：WS2812（GPIO7）状态色轮换 + BOOT 交互 + web 维护页（配网/OTA）+ TWDT 看门狗 |
+| [weather-clock](weather-clock/README.zh.md) | ST7735 0.96" TFT（160x80）+ AHT30 温湿度时钟：NTP 时间、随机底色轮换温湿度显示（自用户 Arduino 工程同接线移植）+ web 配网/OTA |

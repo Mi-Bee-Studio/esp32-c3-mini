@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [blink]
+        project: [blink, weather-clock]
     steps:
       - uses: actions/checkout@v4
 

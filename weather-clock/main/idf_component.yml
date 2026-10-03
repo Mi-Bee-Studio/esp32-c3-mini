@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.0"
+  espressif/cjson:
+    version: ">=1.7.0"
+  # 板端维护页 /api/wifi 的 JSON 解析（同 blink）

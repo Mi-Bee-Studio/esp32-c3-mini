@@ -32,6 +32,7 @@ Key points of the convention:
 | Project | Watchdog | Web/API OTA |
 |---------|----------|-------------|
 | blink | ✅ per-task TWDT (5 s panic) | ✅ dual OTA slots + streaming `POST /ota` |
+| weather-clock | ✅ per-task TWDT (5 s panic) | ✅ dual OTA slots + streaming `POST /ota` |
 
 ---
 
@@ -86,3 +87,4 @@ Key points (pin functions per the Arduino official board definition `lolin_c3_mi
 | Project | Description |
 |---------|-------------|
 | [blink](blink/README.md) | Baseline/test firmware: WS2812 (GPIO7) status-color rotation + BOOT interaction + web maintenance page (provisioning/OTA) + TWDT watchdog |
+| [weather-clock](weather-clock/README.md) | ST7735 0.96" TFT (160x80) + AHT30 desktop clock: NTP time, temp/hum over a rotating random background (ported from the user's Arduino sketch, same wiring) + web provisioning/OTA |
