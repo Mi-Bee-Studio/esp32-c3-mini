@@ -54,7 +54,7 @@ Key points of the convention:
 | Deep sleep | ~43 µA |
 | Dimensions | 22.52 × 18 mm, single-sided SMT |
 | Breakout | 11× GPIO (GPIO0-10) + GPIO20/21 (UART0), 4× ADC |
-| Source | [nologo product page](https://www.nologo.tech/product/esp32) (pin usage also on the [Foot/Pin page](https://www.nologo.tech/esp32C3SuperMiniFoot)); board identity corrected 2026-10-22 from a physical unit (previously mis-documented as Lolin C3 Mini) |
+| Source | [nologo product page](https://www.nologo.tech/product/esp32) (pin usage also on the [Foot/Pin page](https://www.nologo.tech/esp32C3SuperMiniFoot)); board identity corrected 2026-10-22 from a physical unit (previous docs mistook it for a different C3 board) |
 
 ## Pinout Diagram (USB-C pointing up, front/component-side view)
 
@@ -103,6 +103,6 @@ Key points:
 
 | Project | Description |
 |---------|-------------|
-| [blink](blink/README.md) | Baseline/test firmware: WS2812 status-color rotation + BOOT interaction + web maintenance page (provisioning/OTA) + TWDT watchdog (WS2812@GPIO7 per the old Lolin doc — this board has no such LED, pending fix) |
+| [blink](blink/README.md) | Baseline/test firmware: WS2812 status-color rotation + BOOT interaction + web maintenance page (provisioning/OTA) + TWDT watchdog (WS2812@GPIO7 follows the old board doc — this board has no such LED, pending fix) |
 | [weather-clock](weather-clock/README.md) | ST7735 0.96" TFT (160x80) + AHT30 desktop clock: NTP time, temp/hum over a rotating random background + web provisioning/OTA (I2C 8/9) |
 | [env-csi-station](env-csi-station/README.md) | AHT20 temp/humidity (hardware I2C 8/9) + WiFi CSI capture (1 Hz gateway ping ACK stimulus) + SSD1306 display (soft I2C 4/6) + web provisioning/OTA |

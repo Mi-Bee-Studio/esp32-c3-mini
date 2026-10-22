@@ -54,7 +54,7 @@ esp32-c3-mini/
 | 深睡电流 | ~43µA |
 | 尺寸 | 22.52 × 18mm，单面 SMT |
 | 引出 | 11× GPIO（GPIO0-10）+ GPIO20/21（UART0）、4× ADC |
-| 出处 | [nologo 产品页](https://www.nologo.tech/product/esp32)（引脚功能另见 [Foot/Pin 用法页](https://www.nologo.tech/esp32C3SuperMiniFoot)）；板型 2026-10-22 实物更正（此前误记为 Lolin C3 Mini） |
+| 出处 | [nologo 产品页](https://www.nologo.tech/product/esp32)（引脚功能另见 [Foot/Pin 用法页](https://www.nologo.tech/esp32C3SuperMiniFoot)）；板型 2026-10-22 实物更正（此前文档误记为另一块 C3 板） |
 
 ## 引脚位置图（USB-C 朝上，正面/元件面视角）
 
@@ -99,6 +99,6 @@ esp32-c3-mini/
 
 | 项目 | 说明 |
 |------|------|
-| [blink](blink/README.zh.md) | 基线工程/测试固件：WS2812 状态色轮换 + BOOT 交互 + web 维护页（配网/OTA）+ TWDT 看门狗（WS2812@GPIO7 依旧 Lolin 文档——本板无该灯，待改） |
+| [blink](blink/README.zh.md) | 基线工程/测试固件：WS2812 状态色轮换 + BOOT 交互 + web 维护页（配网/OTA）+ TWDT 看门狗（WS2812@GPIO7 沿用旧板文档——本板无该灯，待改） |
 | [weather-clock](weather-clock/README.zh.md) | ST7735 0.96" TFT（160x80）+ AHT30 温湿度时钟：NTP 时间、随机底色轮换温湿度显示 + web 配网/OTA（I2C 8/9） |
 | [env-csi-station](env-csi-station/README.zh.md) | AHT20 温湿度（硬 I2C 8/9）+ WiFi CSI 采集（1Hz 网关 ping ACK 激励）+ SSD1306 屏显（软 I2C 4/6）+ web 配网/OTA |
