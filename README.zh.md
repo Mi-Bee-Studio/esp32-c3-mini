@@ -1,10 +1,10 @@
-# ESP32-C3-Mini（Lolin C3 Mini 主板）
+# ESP32-C3-Mini（nologo ESP32-C3 SuperMini 主板）
 
 [English](README.md) | [中文文档](README.zh.md)
 
 [![Build Firmware](https://github.com/Mi-Bee-Studio/esp32-c3-mini/actions/workflows/build.yml/badge.svg)](https://github.com/Mi-Bee-Studio/esp32-c3-mini/actions/workflows/build.yml)
 
-<img src="docs/images/esp32-c3-mini.jpg" alt="Lolin C3 Mini" width="420">
+<img src="https://www.nologo.tech/assets/img/esp32/esp32c3supermini/esp32c3.png" alt="ESP32-C3 SuperMini" width="420">
 
 主板目录规范的一块板。**本仓库按"主板为根"规范组织**：
 
@@ -33,6 +33,7 @@ esp32-c3-mini/
 |------|--------|-------------|
 | blink | ✅ 任务订阅 TWDT（5s panic） | ✅ OTA 双槽 + `POST /ota` 流式写槽 |
 | weather-clock | ✅ 任务订阅 TWDT（5s panic） | ✅ OTA 双槽 + `POST /ota` 流式写槽 |
+| env-csi-station | ✅ 任务订阅 TWDT（5s panic） | ✅ OTA 双槽 + `POST /ota` 流式写槽 |
 
 ---
 
@@ -40,49 +41,64 @@ esp32-c3-mini/
 
 | 项目 | 值 |
 |------|-----|
-| 模组/芯片 | **ESP32-C3FH4** —— RISC-V 单核 160MHz（4MB flash 片内封装，无 PSRAM） |
-| Flash | 4MB（芯片内封装） |
+| 模组/芯片 | **ESP32-C3FN4** —— RISC-V 单核 @160MHz（4MB flash 封装内，无 PSRAM） |
+| Flash | 4MB（封装内） |
+| SRAM | 400KB（+ ROM 384KB） |
 | PSRAM | 无 |
 | 无线 | 2.4GHz WiFi b/g/n + Bluetooth 5 (LE) |
-| USB | 原生 USB Type-C（**USB-Serial-JTAG**：控制台/烧录同一口，无桥芯片） |
-| 板载 LED | **WS2812B RGB = GPIO7**（可寻址；Arduino 官方板级定义 `PIN_RGB_LED=7`） |
-| 按键 | BOOT = GPIO9（C3 标配 strapping，按住上电进下载）、RESET |
-| 引出 | 12× 数字 IO（D1 mini 盾兼容形制） |
-| 尺寸 | 34.3 × 25.4 mm（D1 mini 形制，可插 Lolin/D1 mini 盾） |
-| 出厂 | 默认带 MicroPython；本仓用 **ESP-IDF**（v6.0） |
-| 出处 | 板级事实取自 [Wemos/Lolin 官方页](https://www.wemos.cc/en/latest/c3/c3_mini.html) + [Arduino 官方板级定义](https://github.com/espressif/arduino-esp32/tree/master/variants/lolin_c3_mini)——"esp32-c3-mini" 名下最常见即此板；**若你的载板是别家，以实板为准** |
+| USB | 原生 USB Type-C —— **ROM USB-CDC**（控制台 + 烧录；无桥片、无 USB-Serial-JTAG 外设） |
+| 板载 LED | **蓝色 LED @GPIO8，低电平点亮**（VSYS→5.1k→LED→GPIO8，另有 10k 上拉；另有一颗电源红灯） |
+| 按键 | BOOT = GPIO9（10k 上拉；按住 + RESET 进下载模式）、RESET |
+| 供电 | USB 5V，或 5V 焊盘外部 3.3-6V（ME6211 LDO；**USB 与外部供电互斥**） |
+| 天线 | 板载 PCB 天线（预留外接天线焊盘/座） |
+| 深睡电流 | ~43µA |
+| 尺寸 | 22.52 × 18mm，单面 SMT |
+| 引出 | 11× GPIO（GPIO0-10）+ GPIO20/21（UART0）、4× ADC |
+| 出处 | [nologo 产品页](https://www.nologo.tech/product/esp32)（引脚功能另见 [Foot/Pin 用法页](https://www.nologo.tech/esp32C3SuperMiniFoot)）；板型 2026-10-22 实物更正（此前误记为 Lolin C3 Mini） |
 
-## 引脚位置图（USB-C 朝上，正面/元件面视角；功能引脚图）
+## 引脚位置图（USB-C 朝上，正面/元件面视角）
 
 ```
-                 ┌─ USB-C ─┐
-                 │ [WS2812]│
-                 │  =GPIO7 │   ESP32-C3FH4
-                 │ [RST]   │   4MB flash（片内，无 PSRAM）
-                 │ [BOOT]  │   12× IO（D1 mini 形制）
-                 └─────────┘
-  物理排布未在官方页以表格形式文档化——引脚名称/排布以
-  wemos.cc 官方 pinout 图为准（勿按本文臆造接线）。
+                 ┌── USB-C ──┐
+   左列（上→下） │  ME6211   │ 右列（上→下）
+        5V ─────┤5V      GPIO5├──── A5 / MISO
+        G  ─────┤G       GPIO6├──── MOSI
+       3V3 ─────┤3V3     GPIO7├──── SS
+      GPIO4 ────┤A4/SCK  GPIO8├──── SDA  [蓝LED=8 低亮] strapping
+      GPIO3 ────┤A3      GPIO9├──── SCL  [BOOT=9] strapping
+      GPIO2 ────┤A2     GPIO10├────
+      GPIO1 ────┤A1     GPIO20├──── U0RXD
+      GPIO0 ────┤A0     GPIO21├──── U0TXD
+                 │ ESP32-C3FN4 │   PCB 天线
+                 └─ 22.52×18mm─┘   [RST] 独立复位键
 ```
 
-要点（引脚功能出处：Arduino 官方板级定义 `lolin_c3_mini/pins_arduino.h`）：
+要点：
 
-- **WS2812 RGB = GPIO7**；**BOOT = GPIO9**；UART0 TX=GPIO21 · RX=GPIO20；
-- I2C：SDA=GPIO8 · SCL=GPIO10；SPI：SS=GPIO5 · MOSI=GPIO4 · MISO=GPIO3 · SCK=GPIO2；
-- ADC：A0–A5 = GPIO0–5；
-- **GPIO18/19 = USB D-/D+**（C3 通用约束），勿挪用；GPIO2/8/9 为 strapping 脚，接外设注意上电电平。
+- I2C 默认 SDA=**GPIO8** / SCL=**GPIO9**（与蓝灯/BOOT 复用，见注意事项）；
+- SPI 默认 SCK=GPIO4 · MISO=GPIO5 · MOSI=GPIO6 · SS=GPIO7；
+- ADC：A0–A5 = GPIO0–5；UART0：TX=GPIO21 · RX=GPIO20；
+- strapping：**GPIO2/8/9**（另 GPIO5 兼 VDD_SPI 相关脚），接外设注意上电电平；
+- **GPIO18/19 = USB D±**（未引出，勿挪用）；GPIO11-17 为封装内 flash 所用。
 
 ## 注意事项
 
-- **无 USB-UART 桥**：串口即 C3 的 USB-Serial-JTAG（控制台/烧录/JTAG 同口）；
-- 进下载模式：按住 BOOT（GPIO9）插 USB / 按 RESET；
-- 无 PSRAM——大缓冲方案按 400KB 级 SRAM 规划（同 luatos-esp32c3 量级）；
-- 出厂带 MicroPython——首次刷 ESP-IDF 固件会覆盖它（可刷回）；
-- D1 mini 盾兼容是这块板的差异化卖点（3.3V 逻辑，注意与老 5V 盾的兼容性）。
+- **控制台是 ROM USB-CDC**：sdkconfig 需 `CONFIG_ESP_CONSOLE_USB_CDC=y`
+  （blink/weather-clock 现用 USB_SERIAL_JTAG 配置在本板无效——本仓已知问题，
+  env-csi-station 已修正，旧项目本轮未动）；
+- 下载模式：**按住 BOOT（GPIO9）+ 短按 RESET**；个别线缆/主机需重插重试；
+- **USB 与外部供电互斥**（同时接可能倒灌，5V 焊盘供电时勿再插 USB）；
+- **GPIO8 = 板载蓝灯**（低电平点亮 + 10k 上拉）：作 I2C SDA 时蓝灯随流量微闪
+  （无害）；同时是 strapping 脚——外设勿在复位时强拉低；
+- **GPIO9 = BOOT 键**：与 SCL 复用，运行中按 BOOT 会毁一次 I2C 读（读失败会
+  重试），勿常按；
+- 无 PSRAM——大缓冲方案按 ~400KB SRAM 预算规划；
+- 出厂固件为 Arduino 生态 MicroPython 类，刷 IDF 会覆盖（可重刷）。
 
 ## 项目索引
 
 | 项目 | 说明 |
 |------|------|
-| [blink](blink/README.zh.md) | 基线工程/测试固件：WS2812（GPIO7）状态色轮换 + BOOT 交互 + web 维护页（配网/OTA）+ TWDT 看门狗 |
-| [weather-clock](weather-clock/README.zh.md) | ST7735 0.96" TFT（160x80）+ AHT30 温湿度时钟：NTP 时间、随机底色轮换温湿度显示（自用户 Arduino 工程同接线移植）+ web 配网/OTA |
+| [blink](blink/README.zh.md) | 基线工程/测试固件：WS2812 状态色轮换 + BOOT 交互 + web 维护页（配网/OTA）+ TWDT 看门狗（WS2812@GPIO7 依旧 Lolin 文档——本板无该灯，待改） |
+| [weather-clock](weather-clock/README.zh.md) | ST7735 0.96" TFT（160x80）+ AHT30 温湿度时钟：NTP 时间、随机底色轮换温湿度显示 + web 配网/OTA（I2C 8/9） |
+| [env-csi-station](env-csi-station/README.zh.md) | AHT20 温湿度（硬 I2C 8/9）+ WiFi CSI 采集（1Hz 网关 ping ACK 激励）+ SSD1306 屏显（软 I2C 4/6）+ web 配网/OTA |
