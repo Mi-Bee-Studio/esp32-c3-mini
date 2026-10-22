@@ -1,0 +1,20 @@
+## env-csi-station — ESP32-C3 SuperMini（nologo）温湿度 + WiFi CSI 采集站
+# 板级信息见 ../README.zh.md；芯片 ESP32-C3FN4（4MB flash 片内封装），无 PSRAM
+CONFIG_IDF_TARGET="esp32c3"
+
+# 控制台走 ROM USB-CDC（SuperMini 原生 USB 无桥片、无 USB-Serial-JTAG 外设）
+CONFIG_ESP_CONSOLE_USB_CDC=y
+
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# 任务看门狗超时触发 panic 重启（主循环 1s 一拍喂狗）
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# C3 单核 RISC-V 满频 160MHz
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+CONFIG_FREERTOS_HZ=1000
+
+# WiFi CSI 采集（本站核心能力；esp_wifi_set_csi_* 依赖此开关）
+CONFIG_ESP_WIFI_CSI_ENABLED=y

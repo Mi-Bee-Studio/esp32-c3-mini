@@ -1,0 +1,3 @@
+dependencies:
+  # /api/wifi 的 JSON 解析（同 blink 家族基线）
+  espressif/cjson: "^1"
