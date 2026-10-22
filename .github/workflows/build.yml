@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [blink, weather-clock]
+        project: [blink, weather-clock, env-csi-station]
     steps:
       - uses: actions/checkout@v4
 
