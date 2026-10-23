@@ -10,6 +10,11 @@
  * 未动：NVS 凭据读取/擦除重试、APSTA 结构、/api/wifi /api/reboot /ota
  * 三个 handler 逐字保留（ota 流式写备用槽→校验→切槽→延迟重启）。
  * 看门狗与 OTA 无耦合：上传在 httpd 任务，主循环照常喂狗。
+ * 5. 28h 浸泡修复（2026-10-22/23 serialtap 日志证据）：LAN 轮询器 keep-alive
+ *    长连接占满 httpd 全部 7 槽 → accept(23)/EMFILE 风暴 2021 条、Web 挂死
+ *    27h+（TCP 可建链、发请求即被 reset）。标准 esp_http_server 双对策：
+ *    lru_purge_socket=true（槽满逐出最久未用）+ 全路由响应带
+ *    Connection: close（强制逐请求全关，杜绝滞留 keep-alive 占槽）。
  */
 #include "app_net.h"
 #include "app_csi.h"
@@ -127,6 +132,7 @@ static esp_err_t send_status(httpd_req_t *req, bool ok, const char *text)
     snprintf(out, sizeof(out), "{\"status\":\"%s\",\"msg\":\"%s\"}",
              ok ? "ok" : "error", text ? text : "");
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close"); /* 逐请求全关，防 keep-alive 占槽 */
     if (!ok) {
         httpd_resp_set_status(req, "400 Bad Request");
     }
@@ -150,6 +156,7 @@ static int read_body(httpd_req_t *req, char *buf, size_t len)
 static esp_err_t h_root(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Connection", "close");
     return httpd_resp_sendstr(req, PAGE_HTML);
 }
 
@@ -189,6 +196,7 @@ static esp_err_t h_status(httpd_req_t *req)
     char json[384];
     wifi_status_json(json, sizeof(json));
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
     return httpd_resp_sendstr(req, json);
 }
 
@@ -237,6 +245,7 @@ static esp_err_t h_wifi(httpd_req_t *req)
 static esp_err_t h_reboot(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
     schedule_reboot(500);
     return ESP_OK;
@@ -245,6 +254,8 @@ static esp_err_t h_reboot(httpd_req_t *req)
 static esp_err_t h_ota(httpd_req_t *req)
 {
     static char buf[4096]; /* 静态收包缓冲（httpd 栈 8K） */
+    /* esp_ota_begin 前置设置：函数内所有返回路径（含流式中断错误）都带 close */
+    httpd_resp_set_hdr(req, "Connection", "close");
     if (req->content_len <= 0) {
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, "{\"status\":\"error\",\"msg\":\"empty body\"}");
@@ -362,6 +373,8 @@ void app_net_init(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
     cfg.max_uri_handlers = 8;
+    cfg.max_open_sockets = 7;    /* 显式声明槽位数（默认即 7），与 lru 联动 */
+    cfg.lru_purge_enable = true; /* 7 槽全忙时逐出最久未用连接（accept(23) 风暴对策；IDF v6.0 字段名） */
     if (httpd_start(&s_server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "httpd 启动失败");
         return;
