@@ -28,6 +28,8 @@
 #include "app_aht20.h"
 #include "app_csi.h"
 #include "app_net.h"
+#include "driver/gpio.h"
+#include "soft_i2c.h"
 #include "ssd1306.h"
 
 static const char *TAG = "MAIN";
@@ -228,8 +230,69 @@ static void draw_ui(const csi_status_t *st, const float *wave, int n)
 
 void app_main(void)
 {
-    /* a. OLED 先起（软 I2C 4/6）：splash 占屏等后续初始化 */
-    s_oled_ok = ssd1306_init(OLED_SDA, OLED_SCL, 0x3C);
+    /* a. OLED 上电自诊断（软 I2C 4/6）：
+     *   a1 裸电平证据行——纯输入（无上拉稳 10ms → 开内部上拉稳 10ms）各取
+     *      一次电平；无上拉仍 L = 外部硬拉低（未供电/未共地/短路/坏模块）。
+     *   a2 双线序 {4,6},{6,4} × 双地址 {0x3C,0x3D} 扫描：bus_check + 地址
+     *      ACK 探测；首个可用组合进真初始化（自动适配接反线序/SA0=1 地址），
+     *      全 NACK 则无屏模式继续跑。 */
+    {
+        /* a1. 裸输入电平（脱离上拉，看外部把线拉到哪） */
+        gpio_config_t io = {
+            .pin_bit_mask = (1ULL << OLED_SDA) | (1ULL << OLED_SCL),
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&io);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        const int off_sda = gpio_get_level((gpio_num_t)OLED_SDA);
+        const int off_scl = gpio_get_level((gpio_num_t)OLED_SCL);
+        io.pull_up_en = GPIO_PULLUP_ENABLE;
+        gpio_config(&io);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        const int on_sda = gpio_get_level((gpio_num_t)OLED_SDA);
+        const int on_scl = gpio_get_level((gpio_num_t)OLED_SCL);
+        ESP_LOGI(TAG, "OLED: raw gpio%d off=%s on=%s | gpio%d off=%s on=%s",
+                 OLED_SDA, off_sda ? "H" : "L", on_sda ? "H" : "L",
+                 OLED_SCL, off_scl ? "H" : "L", on_scl ? "H" : "L");
+        ESP_LOGI(TAG, "SELFTEST: oled gpio%d=%s gpio%d=%s",
+                 OLED_SDA, on_sda ? "H" : "L", OLED_SCL, on_scl ? "H" : "L");
+
+        /* a2. 线序×地址扫描（bus=%s：ok/sda-low/scl-low/sda+scl-low） */
+        static const int orients[2][2] = {
+            {OLED_SDA, OLED_SCL}, {OLED_SCL, OLED_SDA},
+        };
+        static const uint8_t oled_addrs[2] = {0x3C, 0x3D};
+        for (int o = 0; o < 2 && !s_oled_ok; o++) {
+            const int sda = orients[o][0];
+            const int scl = orients[o][1];
+            const int bc = soft_i2c_bus_check(sda, scl);
+            const char *bus = bc == 0 ? "ok"
+                            : (bc & 3) == 3 ? "sda+scl-low"
+                            : (bc & 1) ? "sda-low" : "scl-low";
+            for (int a = 0; a < 2 && !s_oled_ok; a++) {
+                const uint8_t addr = oled_addrs[a];
+                const char *probe = "skip"; /* 总线不可用时跳过地址探测 */
+                if (bc == 0) {
+                    soft_i2c_init(sda, scl);
+                    const uint8_t wr_addr = (uint8_t)(addr << 1);
+                    probe = soft_i2c_write(&wr_addr, 1) == 0 ? "ack" : "nack";
+                }
+                ESP_LOGI(TAG, "OLED: try sda=%d scl=%d addr=0x%02X bus=%s probe=%s",
+                         sda, scl, addr, bus, probe);
+                if (strcmp(probe, "ack") == 0) {
+                    s_oled_ok = ssd1306_init(sda, scl, addr);
+                    ESP_LOGI(TAG, "OLED: 采用 sda=%d scl=%d addr=0x%02X（%s）",
+                             sda, scl, addr, s_oled_ok ? "就绪" : "初始化失败");
+                }
+            }
+        }
+        if (!s_oled_ok) {
+            ESP_LOGW(TAG, "OLED: 全组合无应答，无屏模式继续跑");
+        }
+    }
     if (s_oled_ok) {
         ssd1306_clear();
         ssd1306_text(28, 20, "ENV+CSI", 2);

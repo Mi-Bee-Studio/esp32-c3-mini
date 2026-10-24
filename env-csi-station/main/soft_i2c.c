@@ -11,7 +11,8 @@
 
 static const char *TAG = "softi2c";
 
-#define HALF_US 2 /* 半周期 2µs ≈ 250kHz（上拉偏弱时保守） */
+#define HALF_US 10 /* 半周期 10µs ≈ 50kHz：上拉可能仅内部 ~45k（模块自带上拉
+                    * 缺席/未供电），回摆 τ 数 µs，250kHz 会漏采；刷新 ~0.4s/帧可接受 */
 
 static int s_sda = -1;
 static int s_scl = -1;
@@ -26,20 +27,56 @@ void soft_i2c_init(int sda_io, int scl_io)
 {
     s_sda = sda_io;
     s_scl = scl_io;
+    s_no_pullup = false; /* 重新 init 清缓存态（自诊断扫描会换线序重试） */
     const gpio_config_t io = {
         .pin_bit_mask = (1ULL << sda_io) | (1ULL << scl_io),
-        .mode = GPIO_MODE_OUTPUT_OD, /* 开漏：输出高=释放，靠上拉回高 */
+        /* 开漏：输出高=释放，靠上拉回高。必须 INPUT_OUTPUT_OD：C3 输入缓冲
+         * （IE）关闭时 gpio_get_level 恒读 0 → 假"总线无上拉"→ 写路径被
+         * 永久短路（2026-10-24 自诊断实证：同脚 INPUT 读 H、OUTPUT_OD 读 L） */
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
         .pull_up_en = GPIO_PULLUP_ENABLE, /* 内部上拉兜底（模块通常自带 4.7-10k） */
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io);
     sda_hi();
     scl_hi();
-    esp_rom_delay_us(5 * HALF_US);
+    esp_rom_delay_us(5 * HALF_US); /* 释放后静置 50µs：弱上拉回摆留足时间 */
     if (gpio_get_level((gpio_num_t)s_scl) == 0) {
         s_no_pullup = true;
         ESP_LOGW(TAG, "总线无上拉（SCL=%d 恒低）：屏未接/未供电？写路径短路", s_scl);
     }
+}
+
+int soft_i2c_bus_check(int sda_io, int scl_io)
+{
+    if (sda_io < 0 || sda_io >= GPIO_NUM_MAX || scl_io < 0 || scl_io >= GPIO_NUM_MAX) {
+        return -1;
+    }
+    /* 双线开漏+内部上拉并释放（输出高=释放），与 init 相同的电气条件，
+     * 但不触碰全局 s_sda/s_scl/s_no_pullup——纯体检，探测扫描可反复调用 */
+    const gpio_config_t io = {
+        .pin_bit_mask = (1ULL << sda_io) | (1ULL << scl_io),
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io);
+    gpio_set_level((gpio_num_t)sda_io, 1);
+    gpio_set_level((gpio_num_t)scl_io, 1);
+    int mask = 3;
+    for (int try = 0; try < 5; try++) { /* ≤5 次，重试间隔 10ms */
+        esp_rom_delay_us(2000); /* 静置 ≥2ms：弱上拉回摆留足时间 */
+        mask = (gpio_get_level((gpio_num_t)sda_io) ? 0 : 1)
+             | (gpio_get_level((gpio_num_t)scl_io) ? 0 : 2);
+        if (mask == 0) {
+            return 0; /* 双线皆高：总线可用 */
+        }
+        if (try < 4) {
+            esp_rom_delay_us(10000);
+        }
+    }
+    return mask; /* bit0=SDA 恒低；bit1=SCL 恒低 */
 }
 
 int soft_i2c_write(const uint8_t *buf, int len)
@@ -47,10 +84,10 @@ int soft_i2c_write(const uint8_t *buf, int len)
     if (!buf || len <= 0 || s_sda < 0 || s_no_pullup) {
         return -1;
     }
-    /* 事务前总线空闲检查：释放双线后 SCL 仍低 → 缓存无上拉态 */
+    /* 事务前总线空闲检查：释放双线后 SCL 仍低 → 缓存无上拉态（50µs 回摆余量） */
     scl_hi();
     sda_hi();
-    esp_rom_delay_us(HALF_US);
+    esp_rom_delay_us(50);
     if (gpio_get_level((gpio_num_t)s_scl) == 0) {
         s_no_pullup = true;
         ESP_LOGW(TAG, "总线无上拉，写路径短路");
