@@ -1,20 +1,20 @@
-/* SSD1306 128×64 OLED 极简驱动（软 I2C，水平寻址，帧缓冲全量刷）。
+/* SSD1306 128×64 OLED 极简驱动（传输层抽象，水平寻址，帧缓冲全量刷）。
  * 自 esp32-s3-zero/env-station 同构拷贝：字库/图元/刷屏布局逐字不动，
- * 仅传输层由硬件 I2C master 换接 soft_i2c，并加传输失败计数 +
- * 连续 20 次失败离线跳刷（容错模式参照 rp2040-zero/env-station）。 */
+ * 传输层为 ssd1306_write_fn 函数指针（软 I2C / hw I2C0 共线两实现见
+ * main.c），并加传输失败计数 + 连续 20 次失败离线跳刷（容错模式参照
+ * rp2040-zero/env-station）。 */
 #include "ssd1306.h"
 
 #include <string.h>
 
 #include "esp_log.h"
-#include "soft_i2c.h"
 
 static const char *TAG = "ssd1306";
 static uint8_t s_fb[1024];
-static uint8_t s_addr;    /* 7 位器件地址（写时 <<1 前插） */
-static uint32_t s_errs;   /* 累计传输失败数 */
-static uint8_t s_consec;  /* 连续失败计数 */
-static bool s_offline;    /* 连续 20 次失败后跳刷（重启恢复） */
+static ssd1306_write_fn s_write; /* 传输层（init 绑定），NULL=未初始化 */
+static uint32_t s_errs;          /* 累计传输失败数 */
+static uint8_t s_consec;         /* 连续失败计数 */
+static bool s_offline;           /* 连续 20 次失败后跳刷（重启恢复） */
 
 /* 5×7 字库：'0'-'9' 取经典 glcdfont 数值，字母为手工设计（可辨识即可） */
 
@@ -99,17 +99,14 @@ static const uint8_t *glyph_of(char c)
     return NULL; /* 空格等未收录字符 → 空白 */
 }
 
-/* 统一写路径：I2C 写地址（s_addr<<1，如 0x3C→0x78）由本层在每个调用点
- * 前插进字节流（soft_i2c_write 收原始字节，首字节=写地址）。 */
+/* 统一写路径：buf 为裸载荷（首字节 D/C 控制字节 0x00/0x40），
+ * 器件地址由传输层负责（软 I2C 前插写地址；hw 由 device 句柄承载）。 */
 static bool wr(const uint8_t *buf, int len)
 {
     if (s_offline) {
         return false;
     }
-    uint8_t tmp[130]; /* 1 地址字节 + 最长 129（flush 分页块） */
-    tmp[0] = (uint8_t)(s_addr << 1);
-    memcpy(tmp + 1, buf, (size_t)len);
-    if (soft_i2c_write(tmp, len + 1) != 0) {
+    if (!s_write || s_write(buf, len) != 0) {
         s_errs++;
         if (++s_consec >= 20) {
             s_offline = true;
@@ -134,15 +131,16 @@ static void cmd2(uint8_t c, uint8_t v)
     wr(buf, 3);
 }
 
-bool ssd1306_init(int sda_io, int scl_io, uint8_t addr)
+bool ssd1306_init(ssd1306_write_fn write_fn, uint8_t addr)
 {
-    s_addr = addr;
-    soft_i2c_init(sda_io, scl_io);
-    /* 初始化序列本身即探测：首条命令无应答/无上拉 → false（无屏继续跑） */
+    s_write = write_fn;
+    s_errs = 0;
+    s_consec = 0;
+    s_offline = false; /* 重绑定传输层时复位容错态（开机扫描可能重试多组） */
+    /* 初始化序列本身即探测：首条命令无应答 → false（无屏继续跑） */
     const uint8_t probe[2] = {0x00, 0xAE}; /* display off */
     if (!wr(probe, 2)) {
-        ESP_LOGW(TAG, "SSD1306 无应答/无上拉（0x%02X，SDA=%d SCL=%d）：查接线/上拉/地址",
-                 addr, sda_io, scl_io);
+        ESP_LOGW(TAG, "SSD1306 无应答（0x%02X）：查接线/上拉/地址", addr);
         return false;
     }
     /* 128×64 标准初始化序列（其余命令失败只计数，不致命） */
@@ -163,8 +161,7 @@ bool ssd1306_init(int sda_io, int scl_io, uint8_t addr)
     ssd1306_clear();
     ssd1306_flush();
     cmd(0xAF);            /* display on */
-    ESP_LOGI(TAG, "SSD1306 就绪：0x%02X（软 I2C SDA=%d SCL=%d）",
-             addr, sda_io, scl_io);
+    ESP_LOGI(TAG, "SSD1306 就绪 @0x%02X", addr);
     return s_errs == 0;
 }
 

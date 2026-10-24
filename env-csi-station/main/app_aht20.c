@@ -99,6 +99,11 @@ static uint8_t crc8_aht20(const uint8_t *d, int n)
     return crc;
 }
 
+i2c_master_bus_handle_t aht20_bus(void)
+{
+    return s_bus; /* 供 OLED 共线扫描（aht20_start 失败时为 NULL） */
+}
+
 esp_err_t aht20_read(float *temp_c, float *rh)
 {
     if (!s_dev) {

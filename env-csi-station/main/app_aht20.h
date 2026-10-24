@@ -11,3 +11,8 @@ esp_err_t aht20_start(int sda_io, int scl_io);
 
 /* 触发测量并读取（阻塞 ~90ms）。CRC 校验失败返回 ESP_ERR_INVALID_CRC。 */
 esp_err_t aht20_read(float *temp_c, float *rh);
+
+/* 总线句柄出口：SSD1306 可与 AHT20 共线（0x3C vs 0x38 不冲突），供
+ * main.c 的 OLED hw-bus 扫描（i2c_master_probe / add_device）用；
+ * aht20_start 失败时返回 NULL。50kHz、内部上拉（勿改速——杜邦线真机教训）。 */
+i2c_master_bus_handle_t aht20_bus(void);

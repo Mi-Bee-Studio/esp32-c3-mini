@@ -4,9 +4,9 @@
 
 ESP32-C3 SuperMini（nologo，C3FN4）上的桌面采集站：**AHT20 温湿度**（硬 I2C0）
 + **WiFi CSI 信道状态采集**（关联后 1Hz 网关 ping 激励，ACK 帧携带 CSI 出样本，
-原理见 main/app_csi.c 头注释）+ **SSD1306 128×64 屏显**（软 I2C），带 Web
-配网与 OTA 双槽升级。同构来源：blink（web 配网/OTA 基线）、esp32-s2-mini/
-env-station（AHT20 驱动）、esp32-s3-zero/env-station（SSD1306 驱动）、
+原理见 main/app_csi.c 头注释）+ **SSD1306 128×64 屏显**（双总线自适应），
+带 Web 配网与 OTA 双槽升级。同构来源：blink（web 配网/OTA 基线）、
+esp32-s2-mini/env-station（AHT20 驱动）、esp32-s3-zero/env-station（SSD1306 驱动）、
 luatos-esp32c3/air101-lcd/wifi-csi-sensing（CSI 配置与 ping 激励）。
 
 ## 接线
@@ -16,12 +16,17 @@ luatos-esp32c3/air101-lcd/wifi-csi-sensing（CSI 配置与 ping 激励）。
 | AHT20 SDA | **GPIO8**（I2C0 SDA） | GPIO8 同板载蓝灯（低电平点亮 + 10k 上拉）：I2C 流量会让蓝灯微闪属正常，勿外加强下拉；亦为 strapping 脚，复位时勿拉低 |
 | AHT20 SCL | **GPIO9**（I2C0 SCL） | GPIO9=BOOT 键：运行中按住会毁一次 I2C 读（固件自动重试），勿常按 |
 | AHT20 VCC/GND | 3V3 / G | 3.3V 供电 |
-| SSD1306 SDA | **GPIO4**（软 I2C） | 位带软 I2C（~250kHz，仅写路径） |
-| SSD1306 SCL | **GPIO6**（软 I2C） | 同上 |
-| SSD1306 VCC/GND | 3V3 / G | 地址 **0x3C**；模块需上拉（多数 4 脚模块板载 4.7-10k，无上拉则驱动报无上拉并跳刷） |
+| SSD1306 SDA/SCL | **方案一（推荐）：与 AHT20 共线 GPIO8/9** | 板丝印 SDA/SCL 即 8/9，照丝印接即为此形态；0x3C 屏与 0x38 AHT20 同线不冲突（50kHz 共线） |
+| SSD1306 SDA/SCL | **方案二：独立软 I2C GPIO4/6** | 注意是**数字 4/6 焊盘**，不是板丝印 SDA/SCL；位带软 I2C（~50kHz，仅写路径） |
+| SSD1306 VCC/GND | 3V3 / G | 地址 **0x3C** 或 0x3D（SA0=1）；模块需上拉（多数 4 脚模块板载 4.7-10k） |
 
-**为什么双总线**：ESP32-C3 只有一路硬件 I2C 控制器，I2C0 已给 AHT20（8/9），
-SSD1306 走 bit-bang 软 I2C（4/6）——两外设互不抢线。
+**开机自适应**：固件上电全扫描——软 I2C 双线序 {4,6}/{6,4} × 地址 {0x3C,0x3D}
+→ 硬 I2C0（8/9）× 双地址，首个 ACK 组合即驱动（线序接反 / SA0=1 都能自适配）；
+落点报在 `SELFTEST: i2c ... ssd1306=hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err`，
+全 NACK 则无屏模式继续跑（其余功能不受影响）。
+
+**为什么留双总线**：C3 只有一路硬件 I2C 控制器——屏与 AHT20 共线（8/9）最省事；
+软 I2C 兜底扩一路，屏独占 4/6 时不与 AHT20 抢线抢速。
 
 ## 构建（PowerShell 激活 IDF v6.0）
 
@@ -73,7 +78,8 @@ serialtap flash <设备> \
 
 ```
 SELFTEST: board=esp32-c3-mini-env-csi-station fw=v0.1.0 chip=esp32c3 rev=v0.3 cores=1 flash=4MB psram=none sensor=AHT20 heap=140KB uid=xxxxxxxxxxxx
-SELFTEST: i2c aht20=ok ssd1306=ok
+SELFTEST: oled gpio4=H gpio6=H    # OLED 裸电平证据行（软 I2C 引脚；接线排障）
+SELFTEST: i2c aht20=ok ssd1306=hw:0x3C    # ssd1306 落点：hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err
 SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 ```
 

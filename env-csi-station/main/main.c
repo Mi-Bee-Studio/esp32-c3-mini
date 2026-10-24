@@ -1,8 +1,9 @@
 /*
  * env-csi-station — AHT20 温湿度 + WiFi CSI 采集站（nologo ESP32-C3 SuperMini）。
- * 接线：AHT20 @ 硬件 I2C0（SDA=GPIO8 SCL=GPIO9）；SSD1306 128×64 @ 软件
- * I2C（SDA=GPIO4 SCL=GPIO6，地址 0x3C）——C3 仅一路硬件 I2C 控制器，
- * 双外设分治双总线（软 I2C 仅写路径，见 soft_i2c.c）。
+ * 接线（二选一，固件开机自适应全扫描）：SSD1306 128×64 ① 与 AHT20 共线
+ * 硬件 I2C0（板丝印 SDA/SCL = GPIO8/9，推荐——照丝印接即为此形态）② 独立
+ * 软 I2C（数字 4/6 焊盘，非丝印 SDA/SCL）。C3 仅一路硬件 I2C 控制器，
+ * 软 I2C 兜底扩一路（仅写路径，见 soft_i2c.c）。
  * 板级事实：GPIO8 兼板载蓝灯（低电平点亮 + 10k 上拉），I2C 流量会让
  * 蓝灯微闪属正常；GPIO9=BOOT 键，运行中按下会毁一次 I2C 读（自动重试）。
  * 屏显五区（见 draw_ui）：标题/RSSI、温度、湿度、信道带宽包率、CSI 波形。
@@ -29,18 +30,23 @@
 #include "app_csi.h"
 #include "app_net.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "soft_i2c.h"
 #include "ssd1306.h"
 
 static const char *TAG = "MAIN";
 
-/* OLED 引脚（软 I2C）与 AHT20 引脚（硬 I2C0） */
+/* OLED 软 I2C 引脚（数字 4/6 焊盘——不是板丝印 SDA/SCL）与 AHT20 引脚
+ * （硬 I2C0 = 板丝印 SDA/SCL 8/9，OLED 可共线） */
 #define OLED_SDA 4
 #define OLED_SCL 6
 #define AHT_SDA  8
 #define AHT_SCL  9
 
 static bool s_oled_ok;
+static char s_oled_loc[20] = "err";       /* 位置串：err/soft:0x3C[/swap:1]/hw:0x3C */
+static uint8_t s_soft_addr;                /* 软 I2C 传输层写地址（由其前插首字节） */
+static i2c_master_dev_handle_t s_oled_dev; /* hw I2C0 上的 SSD1306 device */
 static bool s_aht_ok;
 static bool s_env_valid;   /* 至少成功读成一次 AHT20 */
 static float s_temp, s_rh; /* 最近一次成功读数（读失败保留旧值） */
@@ -228,16 +234,42 @@ static void draw_ui(const csi_status_t *st, const float *wave, int n)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * ssd1306 传输层×2（buf 为裸载荷：首字节 D/C 控制字节 0x00/0x40；
+ * 器件地址由传输层负责：软 I2C 前插写地址字节，hw I2C 由 device 句柄承载）
+ * ------------------------------------------------------------------------- */
+static int oled_soft_write(const uint8_t *buf, int len)
+{
+    uint8_t tmp[130]; /* 1 写地址字节 + 最长 129（flush 分页块） */
+    tmp[0] = (uint8_t)(s_soft_addr << 1);
+    memcpy(tmp + 1, buf, (size_t)len);
+    return soft_i2c_write(tmp, len + 1);
+}
+
+static int oled_hw_write(const uint8_t *buf, int len)
+{
+    /* 与 AHT20 同速共线（50kHz：内部上拉弱，杜邦线真机教训），超时 100ms */
+    return i2c_master_transmit(s_oled_dev, buf, len, 100) == ESP_OK ? 0 : -1;
+}
+
 void app_main(void)
 {
-    /* a. OLED 上电自诊断（软 I2C 4/6）：
-     *   a1 裸电平证据行——纯输入（无上拉稳 10ms → 开内部上拉稳 10ms）各取
-     *      一次电平；无上拉仍 L = 外部硬拉低（未供电/未共地/短路/坏模块）。
-     *   a2 双线序 {4,6},{6,4} × 双地址 {0x3C,0x3D} 扫描：bus_check + 地址
-     *      ACK 探测；首个可用组合进真初始化（自动适配接反线序/SA0=1 地址），
-     *      全 NACK 则无屏模式继续跑。 */
+    /* a. AHT20 @ 硬 I2C0（8/9）先起：OLED 自适应扫描要用它的总线句柄
+     *    （屏可能与 AHT20 共线——SuperMini 板丝印 SDA/SCL 即这两脚） */
+    s_aht_ok = aht20_start(AHT_SDA, AHT_SCL) == ESP_OK;
+    if (!s_aht_ok) {
+        ESP_LOGW(TAG, "AHT20 探测失败：查 VCC/GND/线序；GPIO9=BOOT，按住会拉低 SCL");
+    }
+
+    /* b. OLED 双总线上电自诊断（首个 ACK 组合驱动，全 NACK 无屏继续跑）：
+     *   b1 裸电平证据行——软 I2C 引脚 4/6 纯输入（无上拉稳 10ms → 开内部
+     *      上拉稳 10ms）各取一次电平；无上拉仍 L = 外部硬拉低（未供电/
+     *      未共地/短路/坏模块）。
+     *   b2 软总线扫描：双线序 {4,6},{6,4} × 双地址 {0x3C,0x3D}。
+     *   b3 硬总线扫描：与 AHT20 共线 8/9 × 双地址（i2c_master_probe，
+     *      0x3C 屏与 0x38 AHT20 不冲突）。 */
     {
-        /* a1. 裸输入电平（脱离上拉，看外部把线拉到哪） */
+        /* b1. 裸输入电平（脱离上拉，看外部把线拉到哪） */
         gpio_config_t io = {
             .pin_bit_mask = (1ULL << OLED_SDA) | (1ULL << OLED_SCL),
             .mode = GPIO_MODE_INPUT,
@@ -260,37 +292,76 @@ void app_main(void)
         ESP_LOGI(TAG, "SELFTEST: oled gpio%d=%s gpio%d=%s",
                  OLED_SDA, on_sda ? "H" : "L", OLED_SCL, on_scl ? "H" : "L");
 
-        /* a2. 线序×地址扫描（bus=%s：ok/sda-low/scl-low/sda+scl-low） */
+        static const uint8_t oled_addrs[2] = {0x3C, 0x3D};
+
+        /* b2. 软总线扫描（line=ok/sda-low/scl-low/sda+scl-low） */
         static const int orients[2][2] = {
             {OLED_SDA, OLED_SCL}, {OLED_SCL, OLED_SDA},
         };
-        static const uint8_t oled_addrs[2] = {0x3C, 0x3D};
         for (int o = 0; o < 2 && !s_oled_ok; o++) {
             const int sda = orients[o][0];
             const int scl = orients[o][1];
             const int bc = soft_i2c_bus_check(sda, scl);
-            const char *bus = bc == 0 ? "ok"
-                            : (bc & 3) == 3 ? "sda+scl-low"
-                            : (bc & 1) ? "sda-low" : "scl-low";
+            const char *line = bc == 0 ? "ok"
+                             : (bc & 3) == 3 ? "sda+scl-low"
+                             : (bc & 1) ? "sda-low" : "scl-low";
             for (int a = 0; a < 2 && !s_oled_ok; a++) {
                 const uint8_t addr = oled_addrs[a];
-                const char *probe = "skip"; /* 总线不可用时跳过地址探测 */
+                const char *probe = "skip"; /* 线路不可用时跳过地址探测 */
                 if (bc == 0) {
                     soft_i2c_init(sda, scl);
                     const uint8_t wr_addr = (uint8_t)(addr << 1);
                     probe = soft_i2c_write(&wr_addr, 1) == 0 ? "ack" : "nack";
                 }
-                ESP_LOGI(TAG, "OLED: try sda=%d scl=%d addr=0x%02X bus=%s probe=%s",
-                         sda, scl, addr, bus, probe);
+                ESP_LOGI(TAG, "OLED: try bus=soft sda=%d scl=%d addr=0x%02X line=%s probe=%s",
+                         sda, scl, addr, line, probe);
                 if (strcmp(probe, "ack") == 0) {
-                    s_oled_ok = ssd1306_init(sda, scl, addr);
-                    ESP_LOGI(TAG, "OLED: 采用 sda=%d scl=%d addr=0x%02X（%s）",
-                             sda, scl, addr, s_oled_ok ? "就绪" : "初始化失败");
+                    s_soft_addr = addr;
+                    s_oled_ok = ssd1306_init(oled_soft_write, addr);
+                    if (s_oled_ok) {
+                        snprintf(s_oled_loc, sizeof(s_oled_loc), "soft:0x%02X%s",
+                                 addr, sda == OLED_SDA ? "" : " swap:1");
+                    }
+                    ESP_LOGI(TAG, "OLED: 使用 软I2C(SDA=%d SCL=%d) @0x%02X%s（%s）",
+                             sda, scl, addr,
+                             sda == OLED_SDA ? "" : " 线序对调",
+                             s_oled_ok ? "就绪" : "初始化失败");
                 }
             }
         }
+
+        /* b3. 硬总线扫描（AHT20 的 I2C0，屏照板丝印 SDA/SCL 接即在此线上） */
+        i2c_master_bus_handle_t bus = aht20_bus();
+        for (int a = 0; a < 2 && !s_oled_ok && bus != NULL; a++) {
+            const uint8_t addr = oled_addrs[a];
+            const char *probe =
+                i2c_master_probe(bus, addr, 50) == ESP_OK ? "ack" : "nack";
+            ESP_LOGI(TAG, "OLED: try bus=hw sda=%d scl=%d addr=0x%02X line=%s probe=%s",
+                     AHT_SDA, AHT_SCL, addr, s_aht_ok ? "ok" : "err", probe);
+            if (strcmp(probe, "ack") == 0) {
+                const i2c_device_config_t dev_cfg = {
+                    .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+                    .device_address = addr,
+                    .scl_speed_hz = 50 * 1000, /* 与 AHT20 同速（共线勿改） */
+                };
+                if (i2c_master_bus_add_device(bus, &dev_cfg, &s_oled_dev) == ESP_OK) {
+                    s_oled_ok = ssd1306_init(oled_hw_write, addr);
+                    if (s_oled_ok) {
+                        snprintf(s_oled_loc, sizeof(s_oled_loc), "hw:0x%02X", addr);
+                    }
+                    ESP_LOGI(TAG, "OLED: 使用 hw I2C0(8/9 板丝印SDA/SCL) @0x%02X（%s）",
+                             addr, s_oled_ok ? "就绪" : "初始化失败");
+                } else {
+                    ESP_LOGW(TAG, "OLED: hw device 添加失败 @0x%02X", addr);
+                }
+            }
+        }
+        if (bus == NULL) {
+            ESP_LOGW(TAG, "OLED: hw I2C0 总线不可用（aht20_start 失败），跳过硬总线扫描");
+        }
         if (!s_oled_ok) {
-            ESP_LOGW(TAG, "OLED: 全组合无应答，无屏模式继续跑");
+            strlcpy(s_oled_loc, "err", sizeof(s_oled_loc));
+            ESP_LOGW(TAG, "OLED: 双总线全组合无应答，无屏模式继续跑");
         }
     }
     if (s_oled_ok) {
@@ -298,12 +369,6 @@ void app_main(void)
         ssd1306_text(28, 20, "ENV+CSI", 2);
         ssd1306_text(22, 40, "BOOTING...", 1);
         ssd1306_flush();
-    }
-
-    /* b. AHT20 @ 硬 I2C0（8/9） */
-    s_aht_ok = aht20_start(AHT_SDA, AHT_SCL) == ESP_OK;
-    if (!s_aht_ok) {
-        ESP_LOGW(TAG, "AHT20 探测失败：查 VCC/GND/线序；GPIO9=BOOT，按住会拉低 SCL");
     }
 
     /* c. TWDT（家族模式：5s panic；重复 init 容忍 INVALID_STATE） */
@@ -344,9 +409,10 @@ void app_main(void)
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     }
 
-    /* e. SELFTEST 传感器行（I2C 双总线各报一路） */
+    /* e. SELFTEST 传感器行（aht20 ok/err；ssd1306 报落点：err / soft:0x3C
+     *    [swap:1] / hw:0x3C——双总线自适应扫描的结果） */
     ESP_LOGI(TAG, "SELFTEST: i2c aht20=%s ssd1306=%s",
-             s_aht_ok ? "ok" : "err", s_oled_ok ? "ok" : "err");
+             s_aht_ok ? "ok" : "err", s_oled_loc);
 
     /* f. 网络（APSTA+Web 配网/OTA）→ CSI → 开机扫描行（延迟 3s） */
     app_net_init();

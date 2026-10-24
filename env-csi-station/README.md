@@ -6,9 +6,9 @@ A desktop sensor station on the ESP32-C3 SuperMini (nologo, C3FN4):
 **AHT20 temperature/humidity** (hardware I2C0) + **WiFi CSI capture**
 (after association a 1 Hz gateway ping stimulates samples — ACK frames
 carry CSI; see the header comment in main/app_csi.c) + **SSD1306 128x64
-display** (software I2C), with web provisioning and dual-slot OTA. Sibling
-sources: blink (web/OTA baseline), esp32-s2-mini/env-station (AHT20 driver),
-esp32-s3-zero/env-station (SSD1306 driver), and
+display** (dual-bus auto-detect), with web provisioning and dual-slot OTA.
+Sibling sources: blink (web/OTA baseline), esp32-s2-mini/env-station
+(AHT20 driver), esp32-s3-zero/env-station (SSD1306 driver), and
 luatos-esp32c3/air101-lcd/wifi-csi-sensing (CSI config + ping stimulus).
 
 ## Wiring
@@ -18,13 +18,20 @@ luatos-esp32c3/air101-lcd/wifi-csi-sensing (CSI config + ping stimulus).
 | AHT20 SDA | **GPIO8** (I2C0 SDA) | GPIO8 doubles as the onboard blue LED (active-LOW, 10k pull-up): it flickers faintly with I2C traffic — normal, do not add a strong pull-down; also a strapping pin, keep high at reset |
 | AHT20 SCL | **GPIO9** (I2C0 SCL) | GPIO9 = BOOT button: holding it mid-run breaks one I2C read (firmware retries); do not keep it pressed |
 | AHT20 VCC/GND | 3V3 / G | 3.3 V supply |
-| SSD1306 SDA | **GPIO4** (soft I2C) | Bit-banged soft I2C (~250 kHz, write path only) |
-| SSD1306 SCL | **GPIO6** (soft I2C) | — |
-| SSD1306 VCC/GND | 3V3 / G | Address **0x3C**; module needs pull-ups (most 4-pin modules carry 4.7-10k; without them the driver reports no-pull-up and skips refresh) |
+| SSD1306 SDA/SCL | **Option 1 (recommended): share I2C0 with the AHT20, GPIO8/9** | The board silkscreen SDA/SCL *is* GPIO8/9 — wiring by silkscreen lands here; a 0x3C display and the 0x38 AHT20 coexist fine (50 kHz shared bus) |
+| SSD1306 SDA/SCL | **Option 2: dedicated soft I2C on GPIO4/6** | These are the **numeric 4/6 pads**, NOT the SDA/SCL silkscreen; bit-banged (~50 kHz, write path only) |
+| SSD1306 VCC/GND | 3V3 / G | Address **0x3C** or 0x3D (SA0=1); module needs pull-ups (most 4-pin modules carry 4.7-10k) |
 
-**Why two buses**: the ESP32-C3 has a single hardware I2C controller; I2C0 is
-taken by the AHT20 (8/9), so the SSD1306 runs over bit-banged soft I2C (4/6) —
-the two peripherals never share wires.
+**Boot-time auto-detect**: the firmware sweeps everything — soft I2C with
+both wire orders {4,6}/{6,4} × addresses {0x3C,0x3D}, then hardware I2C0
+(8/9) × both addresses — and drives the first ACKing combination (swapped
+wires / SA0=1 are self-adapted). The landing spot is reported as
+`SELFTEST: i2c ... ssd1306=hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err`;
+all-NACK keeps the station headless (everything else unaffected).
+
+**Why keep both buses**: the C3 has a single hardware I2C controller —
+sharing it with the AHT20 (8/9) is the easiest wiring; soft I2C adds a
+second bus so the display can own 4/6 without contending with the AHT20.
 
 ## Build (activate IDF v6.0 in PowerShell)
 
@@ -80,7 +87,8 @@ serialtap flash <device> \
 
 ```
 SELFTEST: board=esp32-c3-mini-env-csi-station fw=v0.1.0 chip=esp32c3 rev=v0.3 cores=1 flash=4MB psram=none sensor=AHT20 heap=140KB uid=xxxxxxxxxxxx
-SELFTEST: i2c aht20=ok ssd1306=ok
+SELFTEST: oled gpio4=H gpio6=H    # bare-level evidence line for the soft-I2C pins (wiring debug)
+SELFTEST: i2c aht20=ok ssd1306=hw:0x3C    # ssd1306 landing: hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err
 SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 ```
 
