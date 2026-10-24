@@ -2,7 +2,9 @@
  * 时序：半周期 2µs（~250kHz），esp_rom_delay_us 精确节拍；START/STOP 按
  * I2C 规范（SCL 高时 SDA 跳变）；每字节 MSB 先行，SDA 在 SCL 低时摆好，
  * 第 9 个时钟释放 SDA 读 ACK（低=应答）。无上拉检测：init 及每次事务前
- * 释放双线，SCL 仍为低 → 缓存无上拉态，写路径永久短路（重启恢复）。 */
+ * 释放双线，SCL 仍为低 → 缓存无上拉态，写路径永久短路（重启恢复）。
+ * 现状（屏拆走单独调试期间）：开机不再使用——原 4/6 软总线 OLED 扫描已
+ * 收敛移除（GPIO4 现归 HC-SR501 PIR），本文件保留编译备未来外设复用。 */
 #include "soft_i2c.h"
 
 #include "driver/gpio.h"

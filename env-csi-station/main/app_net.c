@@ -15,9 +15,12 @@
  *    27h+（TCP 可建链、发请求即被 reset）。标准 esp_http_server 双对策：
  *    lru_purge_socket=true（槽满逐出最久未用）+ 全路由响应带
  *    Connection: close（强制逐请求全关，杜绝滞留 keep-alive 占槽）。
+ * 6. /api/status 增补 PIR 字段（app_pir：pir/pir_cnt/pir_last/present），
+ *    状态卡同步渲染 人在/无人（PIR 计数 N，距上次 Ts）一行。
  */
 #include "app_net.h"
 #include "app_csi.h"
+#include "app_pir.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -85,6 +88,7 @@ static const char PAGE_HTML[] =
 "('WiFi '+s.ssid+' '+s.ip+' RSSI '+s.rssi):"
 "('未联网。手机连热点 <b>" AP_SSID "</b>（密码 12345678）后访问 192.168.4.1'))"
 "+'<br>temp '+s.temp+'°C · rh '+s.rh+'% · csi '+s.csi+' @'+s.csi_hz+'/s'"
+"+'<br>'+(s.present?'人在':'无人')+'（PIR 计数 '+s.pir_cnt+'，距上次 '+(s.pir_last<0?'-':s.pir_last+'s')+'）'"
 "+'<br>heap '+s.heap+'K · 运行 '+s.up+'s';"
 "}catch(e){$('st').textContent='状态获取失败'}}"
 "async function wifiSave(){if(!$('ssid').value)return msg('SSID 不能为空');"
@@ -181,14 +185,19 @@ static void wifi_status_json(char *out, size_t len)
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         s_rssi = ap.rssi;
     }
+    pir_status_t pir; /* HC-SR501（app_pir）：电平/计数/距上次/在场 */
+    app_pir_get_status(&pir);
     snprintf(out, len,
              "{\"fw\":\"%s\",\"connected\":%s,\"ssid\":\"%s\",\"ip\":\"%s\","
              "\"rssi\":%d,\"heap\":%u,\"up\":%lu,"
-             "\"temp\":%.1f,\"rh\":%.1f,\"csi\":%lu,\"csi_hz\":%.1f}",
+             "\"temp\":%.1f,\"rh\":%.1f,\"csi\":%lu,\"csi_hz\":%.1f,"
+             "\"pir\":%d,\"pir_cnt\":%lu,\"pir_last\":%d,\"present\":%d}",
              APP_FW_VERSION, s_connected ? "true" : "false", s_ssid, s_ip,
              s_rssi, (unsigned)esp_get_free_heap_size(),
              (unsigned long)(esp_timer_get_time() / 1000000),
-             t, rh, csi, csi_hz);
+             t, rh, csi, csi_hz,
+             pir.level, (unsigned long)pir.count, pir.last_trig_s,
+             pir.present ? 1 : 0);
 }
 
 static esp_err_t h_status(httpd_req_t *req)

@@ -3,10 +3,14 @@
 [English](README.md) | [中文文档](README.zh.md)
 
 ESP32-C3 SuperMini（nologo，C3FN4）上的桌面采集站：**AHT20 温湿度**（硬 I2C0）
-+ **WiFi CSI 信道状态采集**（关联后 1Hz 网关 ping 激励，ACK 帧携带 CSI 出样本，
-原理见 main/app_csi.c 头注释）+ **SSD1306 128×64 屏显**（双总线自适应），
-带 Web 配网与 OTA 双槽升级。同构来源：blink（web 配网/OTA 基线）、
-esp32-s2-mini/env-station（AHT20 驱动）、esp32-s3-zero/env-station（SSD1306 驱动）、
++ **HC-SR501 人体感应**（OUT→GPIO4，数字推挽输出：ANYEDGE 中断 + 3s 去抖计数、
+120s 在场窗、上电 60s 预热期间忽略事件，见 main/app_pir.c）+ **WiFi CSI 信道状态
+采集**（关联后 1Hz 网关 ping 激励，ACK 帧携带 CSI 出样本，原理见 main/app_csi.c
+头注释）+ **SSD1306 128×64 屏显**（已拆走单独调试，固件仍开机自扫其回归位硬
+I2C0），带 Web 配网与 OTA 双槽升级。PIR 状态上报：`/api/status`
+（`pir`/`pir_cnt`/`pir_last`/`present`）、Web 状态卡（人在/无人）、心跳行、
+SELFTEST。同构来源：blink（web 配网/OTA 基线）、esp32-s2-mini/env-station
+（AHT20 驱动）、esp32-s3-zero/env-station（SSD1306 驱动）、
 luatos-esp32c3/air101-lcd/wifi-csi-sensing（CSI 配置与 ping 激励）。
 
 ## 接线
@@ -16,17 +20,18 @@ luatos-esp32c3/air101-lcd/wifi-csi-sensing（CSI 配置与 ping 激励）。
 | AHT20 SDA | **GPIO8**（I2C0 SDA） | GPIO8 同板载蓝灯（低电平点亮 + 10k 上拉）：I2C 流量会让蓝灯微闪属正常，勿外加强下拉；亦为 strapping 脚，复位时勿拉低 |
 | AHT20 SCL | **GPIO9**（I2C0 SCL） | GPIO9=BOOT 键：运行中按住会毁一次 I2C 读（固件自动重试），勿常按 |
 | AHT20 VCC/GND | 3V3 / G | 3.3V 供电 |
-| SSD1306 SDA/SCL | **方案一（推荐）：与 AHT20 共线 GPIO8/9** | 板丝印 SDA/SCL 即 8/9，照丝印接即为此形态；0x3C 屏与 0x38 AHT20 同线不冲突（50kHz 共线） |
-| SSD1306 SDA/SCL | **方案二：独立软 I2C GPIO4/6** | 注意是**数字 4/6 焊盘**，不是板丝印 SDA/SCL；位带软 I2C（~50kHz，仅写路径） |
+| HC-SR501 OUT | **GPIO4**（数字 4 焊盘） | 数字推挽输出（有人=高）；模块自带可调重触发/保持时间电位器。固件配内部下拉（线脱落时电平仍定义）；ANYEDGE 中断、上升沿 ≥3s 间距才计数（去抖）、120s 在场窗、上电 60s 预热期间忽略事件 |
+| HC-SR501 VCC/GND | 3V3 / G | 3.3V 供电 |
+| SSD1306 SDA/SCL | **GPIO8/9（与 AHT20 共线硬 I2C0）——屏已拆走单独调试** | 屏当前不在板上；回归位 = 板丝印 SDA/SCL = GPIO8/9，开机自扫 {0x3C,0x3D}。原软 I2C(4/6) 扫描已收敛移除——GPIO4 现归 PIR |
 | SSD1306 VCC/GND | 3V3 / G | 地址 **0x3C** 或 0x3D（SA0=1）；模块需上拉（多数 4 脚模块板载 4.7-10k） |
 
-**开机自适应**：固件上电全扫描——软 I2C 双线序 {4,6}/{6,4} × 地址 {0x3C,0x3D}
-→ 硬 I2C0（8/9）× 双地址，首个 ACK 组合即驱动（线序接反 / SA0=1 都能自适配）；
-落点报在 `SELFTEST: i2c ... ssd1306=hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err`，
-全 NACK 则无屏模式继续跑（其余功能不受影响）。
+**开机自适应**：固件扫硬 I2C0（8/9）× 双地址 {0x3C,0x3D}——屏的回归位——首个
+ACK 即驱动；落点报在 `SELFTEST: i2c ... ssd1306=hw:0x3C / err`，全 NACK 则无屏
+模式继续跑（其余功能不受影响，屏拆走期间 err 属正常）。
 
-**为什么留双总线**：C3 只有一路硬件 I2C 控制器——屏与 AHT20 共线（8/9）最省事；
-软 I2C 兜底扩一路，屏独占 4/6 时不与 AHT20 抢线抢速。
+**soft_i2c.c 为何仍编译**：C3 只有一路硬件 I2C 控制器（AHT20 与屏回归位共用）；
+位带软 I2C 写路径留给未来需要第二条总线的外设。GPIO4 归 PIR 期间开机不使用
+（GPIO6 空闲）。
 
 ## 构建（PowerShell 激活 IDF v6.0）
 
@@ -77,9 +82,8 @@ serialtap flash <设备> \
 ## SELFTEST 样例（三行，serialtap 可聚合）
 
 ```
-SELFTEST: board=esp32-c3-mini-env-csi-station fw=v0.1.0 chip=esp32c3 rev=v0.3 cores=1 flash=4MB psram=none sensor=AHT20 heap=140KB uid=xxxxxxxxxxxx
-SELFTEST: oled gpio4=H gpio6=H    # OLED 裸电平证据行（软 I2C 引脚；接线排障）
-SELFTEST: i2c aht20=ok ssd1306=hw:0x3C    # ssd1306 落点：hw:0x3C / soft:0x3C / soft:0x3C swap:1 / err
+SELFTEST: board=esp32-c3-mini-env-csi-station fw=v0.1.0 chip=esp32c3 rev=v0.3 cores=1 flash=4MB psram=none sensor=AHT20+SR501 heap=140KB uid=xxxxxxxxxxxx
+SELFTEST: i2c aht20=ok ssd1306=hw:0x3C pir=gpio4    # ssd1306：hw:0x3C / err（屏拆走期间 err 属正常）；PIR 为 GPIO 器件（开机 60s 预热）
 SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 ```
 

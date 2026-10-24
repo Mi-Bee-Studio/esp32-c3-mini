@@ -4,7 +4,8 @@
 /* SSD1306 128×64 驱动：自 esp32-s3-zero/env-station 同构拷贝，传输层已抽象
  * 为函数指针（buf 为裸载荷：首字节 D/C 控制字节 0x00/0x40 + 命令/数据），
  * 地址由传输层负责（软 I2C 前插写地址字节；hw I2C 由 device 句柄承载）。
- * 现有两传输：main.c 的 soft_i2c(4/6) 与 hw I2C0(8/9，与 AHT20 共线)。 */
+ * 当前仅 hw I2C0(8/9，与 AHT20 共线) 一个传输（屏拆走单独调试，原
+ * soft_i2c(4/6) 传输层随软总线扫描移除——GPIO4 现归 HC-SR501 PIR）。 */
 
 /* 传输层写函数：成功返回 0，非 0 = 失败（无应答/总线不可用）。 */
 typedef int (*ssd1306_write_fn)(const uint8_t *buf, int len);
