@@ -80,7 +80,8 @@ serialtap flash <device> \
 
 ## TX power cap (8.5 dBm)
 
-Right after `esp_wifi_start()` the firmware caps WiFi TX power at
+On `WIFI_EVENT_STA_START`, before the first connection attempt, the
+firmware caps WiFi TX power at
 **8.5 dBm** (`TX_POWER_CAP_QDBM` in `main/app_net.c`, unit 0.25 dBm) and
 logs the value read back from the driver:
 

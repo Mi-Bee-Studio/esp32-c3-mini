@@ -18,7 +18,8 @@
  * 6. /api/status 增补 PIR 字段（app_pir：pir/pir_cnt/pir_last/present），
  *    状态卡同步渲染 人在/无人（PIR 计数 N，距上次 Ts）一行。
  * 7. 2026-11-11 台架排障三项（serialtap 日志证据）：
- *    a. TX 功率上限降到 8.5 dBm（TX_POWER_CAP_QDBM，依据见宏注释）；
+ *    a. TX 功率上限降到 8.5 dBm（TX_POWER_CAP_QDBM，依据见宏注释；在 STA_START
+ *       事件里、发起关联之前应用，避免与首次关联竞争）；
  *    b. 断线退避时序 bug：原实现先置 s_connected=false 再用它选退避，
  *       5000ms 分支永不可达——改为先取旧状态再翻转；
  *    c. app_net_scan_hold()：自检扫描占用 STA 期间断线处理器不抢重连
@@ -55,7 +56,8 @@
  *  (2) 本板台架实测（2026-11-08..11）：20 dBm 下约 5 万次认证请求只有 82 次通过
  *      认证、从未入网，而接收正常（真实扫描 21 个 AP、自家 AP -47 dBm）；
  *      降到 8.5 dBm 后首次尝试即关联，30 分钟未断开；同期 LAN ping 丢包约 4%。
- * 必须在 esp_wifi_start() 之后设置（之前调用返回 ESP_ERR_WIFI_NOT_STARTED）。
+ * 必须在 WiFi 启动之后设置（之前调用返回 ESP_ERR_WIFI_NOT_STARTED）；本固件在
+ * STA_START 事件里、发起关联之前应用（tx_power_cap_apply）。
  * 代价：覆盖距离缩短；离 AP 较远的部署可按需调高本宏（上限 80 = 20 dBm）。 */
 #define TX_POWER_CAP_QDBM 34
 
@@ -325,10 +327,28 @@ static esp_err_t h_ota(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 应用 TX 功率上限并回读实际值（依据见 TX_POWER_CAP_QDBM）。在 STA_START
+ * 事件里、发起关联之前调用，顺序由代码保证：首个探测/认证帧即按上限发出。
+ * （若放在 esp_wifi_start() 返回之后，会与事件任务里的 esp_wifi_connect()
+ * 竞争——AP 信息有缓存走快速关联时，认证帧在启动后几十毫秒内就发出。）
+ * 驱动按档位取整，以回读值为准。事件任务栈小，这里只用整数格式化。 */
+static void tx_power_cap_apply(void)
+{
+    int8_t got = 0;
+    const esp_err_t serr = esp_wifi_set_max_tx_power(TX_POWER_CAP_QDBM);
+    const esp_err_t gerr = esp_wifi_get_max_tx_power(&got);
+    const int req_t = TX_POWER_CAP_QDBM * 10 / 4; /* 0.25 dBm → 0.1 dBm */
+    const int got_t = got * 10 / 4;
+    ESP_LOGI(TAG, "TX 功率上限：请求 %d（%d.%d dBm）set=%s；回读 %d（%d.%d dBm）get=%s",
+             TX_POWER_CAP_QDBM, req_t / 10, req_t % 10, esp_err_to_name(serr),
+             (int)got, got_t / 10, got_t % 10, esp_err_to_name(gerr));
+}
+
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        tx_power_cap_apply(); /* 先设上限，再发起关联 */
         if (s_have_creds) {
             esp_wifi_connect();
         }
@@ -415,19 +435,7 @@ void app_net_init(void)
         }
         nvs_close(h);
     }
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    /* TX 功率上限（依据见 TX_POWER_CAP_QDBM）：start 之后才能设；回读实际生效值
-     * 一并打出——驱动按档位取整，台架上以回读值为准。首个认证帧在关联扫描
-     * （约 1s）之后才发出，此处设置必然先于它生效。 */
-    {
-        int8_t got = 0;
-        const esp_err_t serr = esp_wifi_set_max_tx_power(TX_POWER_CAP_QDBM);
-        const esp_err_t gerr = esp_wifi_get_max_tx_power(&got);
-        ESP_LOGI(TAG, "TX 功率上限：请求 %d（%.1f dBm）set=%s；回读 %d（%.1f dBm）get=%s",
-                 TX_POWER_CAP_QDBM, TX_POWER_CAP_QDBM / 4.0, esp_err_to_name(serr),
-                 (int)got, got / 4.0, esp_err_to_name(gerr));
-    }
+    ESP_ERROR_CHECK(esp_wifi_start()); /* TX 功率上限在 STA_START 事件里应用（tx_power_cap_apply） */
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;

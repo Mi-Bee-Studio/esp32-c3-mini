@@ -67,7 +67,7 @@ serialtap flash <设备> \
 
 ## 发射功率上限（8.5 dBm）
 
-固件在 `esp_wifi_start()` 之后把 WiFi 发射功率上限设为 **8.5 dBm**
+固件在 WiFi 启动事件（`STA_START`）里、发起首次关联之前，把 WiFi 发射功率上限设为 **8.5 dBm**
 （`main/app_net.c` 的 `TX_POWER_CAP_QDBM`，单位 0.25 dBm），开机日志回读实际值：
 
 ```
