@@ -65,6 +65,21 @@ serialtap flash <设备> \
 3. Web 页支持 **OTA 双槽升级**（上传 .bin → 写备用槽 → 校验切槽重启），
    在网后用 STA IP 访问同一页面。
 
+## 发射功率上限（8.5 dBm）
+
+固件在 `esp_wifi_start()` 之后把 WiFi 发射功率上限设为 **8.5 dBm**
+（`main/app_net.c` 的 `TX_POWER_CAP_QDBM`，单位 0.25 dBm），开机日志回读实际值：
+
+```
+web: TX 功率上限：请求 34（8.5 dBm）set=ESP_OK；回读 34（8.5 dBm）get=ESP_OK
+```
+
+原因：nologo SuperMini 这类板在满功率（20 dBm）下常见认证超时（AUTH_EXPIRE，
+日志表现为 `init -> auth (0xb0)` / `auth -> init (0x200)` 无限循环）。本板台架
+实测（2026-11-08..11）：20 dBm 下约 5 万次认证请求只有 82 次通过认证、从未入网，
+而接收正常；降到 8.5 dBm 后首次尝试即关联，30 分钟观察零掉线。代价是覆盖
+距离缩短——离 AP 较远的部署可调高该宏（上限 80 = 20 dBm）。
+
 ## 屏显布局（128×64，五区）
 
 ```
@@ -87,6 +102,12 @@ SELFTEST: i2c aht20=ok ssd1306=hw:0x3C pir=gpio4    # ssd1306：hw:0x3C / err（
 SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 ```
 
+`wifi` 行是**真实测量**（2026-11-11 修正）：已关联时在网直扫；未关联时先占用
+STA（中止关联尝试、断线处理器让路）再扫，扫完恢复关联。`aps` 是扫描到的 AP
+真实总数（`top`/`ours` 只取最强 20 条）；三次扫描都失败打 `aps=-1`——表示
+没测成，不等于 `aps=0`（空口全聋）。修正前"有凭据但关联不上"时扫描被驱动
+拒绝（`STA is connecting, scan are not allowed!`）却照打 `aps=0`，属假象。
+
 ## 固件基线合规
 
 | 项 | 状态 |
@@ -97,3 +118,4 @@ SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 
 ---
 2026-10-22 · v0.1.0 初版
+2026-11-11 · SELFTEST 真实扫描（修 aps=0 假象）· TX 上限 8.5 dBm · 断线退避时序修正

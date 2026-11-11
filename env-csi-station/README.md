@@ -78,6 +78,25 @@ serialtap flash <device> \
    write standby slot → verify, switch slot, reboot); use the STA IP once
    online.
 
+## TX power cap (8.5 dBm)
+
+Right after `esp_wifi_start()` the firmware caps WiFi TX power at
+**8.5 dBm** (`TX_POWER_CAP_QDBM` in `main/app_net.c`, unit 0.25 dBm) and
+logs the value read back from the driver:
+
+```
+web: TX 功率上限：请求 34（8.5 dBm）set=ESP_OK；回读 34（8.5 dBm）get=ESP_OK
+```
+
+Why: boards of the nologo SuperMini kind commonly fail authentication at
+full power (20 dBm) with AUTH_EXPIRE, seen as an endless
+`init -> auth (0xb0)` / `auth -> init (0x200)` loop. Bench result on this
+board (2026-11-08..11): at 20 dBm only 82 of roughly 50,000
+authentication requests got through and the board never joined, while
+reception was fine; at 8.5 dBm it associated on the first attempt and
+held for a 30-minute watch with zero drops. The cost is shorter range —
+raise the macro (max 80 = 20 dBm) for deployments far from the AP.
+
 ## Display layout (128x64, five zones)
 
 ```
@@ -100,6 +119,17 @@ SELFTEST: i2c aht20=ok ssd1306=hw:0x3C pir=gpio4    # ssd1306: hw:0x3C / err (er
 SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 ```
 
+The `wifi` line is a **real measurement** (fixed 2026-11-11): when
+associated the scan runs in place; when not associated the firmware first
+takes the STA (aborts the connection attempt, the disconnect handler
+stands down), scans, then resumes association. `aps` is the true number
+of APs found (`top`/`ours` use the strongest 20); if all three scan
+attempts fail it prints `aps=-1` — meaning "not measured", which is not
+the same as `aps=0` (deaf radio). Before the fix, a board with
+credentials that could not associate had its scan rejected by the driver
+(`STA is connecting, scan are not allowed!`) yet still printed `aps=0`,
+a false reading.
+
 ## Firmware baseline compliance
 
 | Item | Status |
@@ -110,3 +140,4 @@ SELFTEST: wifi aps=14 top="-41 ch6 MYSSID; -55 ch1 OTHER; ..." ours="MYSSID=-41"
 
 ---
 2026-10-22 · v0.1.0 initial release
+2026-11-11 · real SELFTEST scan (fixes the false aps=0) · TX cap 8.5 dBm · disconnect back-off ordering fix

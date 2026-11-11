@@ -17,6 +17,12 @@
  *    Connection: close（强制逐请求全关，杜绝滞留 keep-alive 占槽）。
  * 6. /api/status 增补 PIR 字段（app_pir：pir/pir_cnt/pir_last/present），
  *    状态卡同步渲染 人在/无人（PIR 计数 N，距上次 Ts）一行。
+ * 7. 2026-11-11 台架排障三项（serialtap 日志证据）：
+ *    a. TX 功率上限降到 8.5 dBm（TX_POWER_CAP_QDBM，依据见宏注释）；
+ *    b. 断线退避时序 bug：原实现先置 s_connected=false 再用它选退避，
+ *       5000ms 分支永不可达——改为先取旧状态再翻转；
+ *    c. app_net_scan_hold()：自检扫描占用 STA 期间断线处理器不抢重连
+ *       （配合 main.c scan_task 的真实扫描，修 aps=0 假象）。
  */
 #include "app_net.h"
 #include "app_csi.h"
@@ -42,6 +48,17 @@
 #define APP_FW_VERSION "env-csi-station v0.1.0"
 #define AP_SSID "csi-station"
 
+/* TX 功率上限（单位 0.25 dBm；34 = 8.5 dBm）。依据：
+ *  (1) nologo ESP32-C3 SuperMini 家族的 AUTH_EXPIRE 通病——社区普遍归因于板载
+ *      陶瓷天线/匹配欠佳，满功率（20 dBm）下认证帧发不出去或 AP 解不出，
+ *      通行做法即把发射功率降到 8.5 dBm；
+ *  (2) 本板台架实测（2026-11-08..11）：20 dBm 下约 5 万次认证请求只有 82 次通过
+ *      认证、从未入网，而接收正常（真实扫描 21 个 AP、自家 AP -47 dBm）；
+ *      降到 8.5 dBm 后首次尝试即关联，30 分钟观察零掉线。
+ * 必须在 esp_wifi_start() 之后设置（之前调用返回 ESP_ERR_WIFI_NOT_STARTED）。
+ * 代价：覆盖距离缩短；离 AP 较远的部署可按需调高本宏（上限 80 = 20 dBm）。 */
+#define TX_POWER_CAP_QDBM 34
+
 static const char *TAG = "web";
 static httpd_handle_t s_server;
 static char s_ssid[33];
@@ -49,6 +66,7 @@ static volatile bool s_connected;
 static volatile int8_t s_rssi;
 static bool s_have_creds;
 static char s_ip[16]; /* GOT_IP 时记录，/api/status 直接用 */
+static volatile bool s_scan_hold; /* 自检扫描占用 STA：断线处理器让路（app_net_scan_hold） */
 
 /* main.c 数据出口（屏显与 Web 状态卡同源）：最近一次成功温湿度 + CSI 包数/包率 */
 extern bool station_env(float *t, float *rh);
@@ -315,12 +333,19 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             esp_wifi_connect();
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        /* 先取旧状态再翻转（2026-11-11 修正）：原实现先置 false 再用它选退避，
+         * 5000ms 分支永不可达。语义：在网后掉线 = 5s 退避（AP 可能在重启）；
+         * 从未连上 / 刚改凭据（wifi_save 先行置 false）= 1s 快重试。 */
+        const bool was_connected = s_connected;
         s_connected = false;
         app_csi_on_wifi(false); /* 停网关 ping（无关联即无 CSI 包） */
-        if (!s_have_creds) {
-            return;
+        if (!s_have_creds || s_scan_hold) {
+            return; /* 无凭据不重连；自检扫描占用期间让路（release 时恢复关联） */
         }
-        vTaskDelay(pdMS_TO_TICKS(s_ssid[0] && s_connected ? 5000 : 1000));
+        vTaskDelay(pdMS_TO_TICKS(s_ssid[0] && was_connected ? 5000 : 1000));
+        if (s_scan_hold) {
+            return; /* 退避期间进入了扫描占用：同样让路，别打断扫描 */
+        }
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
@@ -328,6 +353,19 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
         ESP_LOGI(TAG, "WiFi 已连接：%s ip=" IPSTR, s_ssid, IP2STR(&e->ip_info.ip));
         app_csi_on_wifi(true); /* 关联成功：使能 CSI + 网关 ping 激励 */
+    }
+}
+
+void app_net_scan_hold(bool hold)
+{
+    if (hold) {
+        s_scan_hold = true;    /* 先置标志：此后到达的断线事件一律让路 */
+        esp_wifi_disconnect(); /* 中止进行中的关联尝试，STA 回空闲，驱动才放行扫描 */
+    } else {
+        s_scan_hold = false;
+        if (s_have_creds) {
+            esp_wifi_connect(); /* 恢复关联流程（占用期间处理器没有重连） */
+        }
     }
 }
 
@@ -378,6 +416,18 @@ void app_net_init(void)
         nvs_close(h);
     }
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    /* TX 功率上限（依据见 TX_POWER_CAP_QDBM）：start 之后才能设；回读实际生效值
+     * 一并打出——驱动按档位取整，台架上以回读值为准。首个认证帧在关联扫描
+     * （约 1s）之后才发出，此处设置必然先于它生效。 */
+    {
+        int8_t got = 0;
+        const esp_err_t serr = esp_wifi_set_max_tx_power(TX_POWER_CAP_QDBM);
+        const esp_err_t gerr = esp_wifi_get_max_tx_power(&got);
+        ESP_LOGI(TAG, "TX 功率上限：请求 %d（%.1f dBm）set=%s；回读 %d（%.1f dBm）get=%s",
+                 TX_POWER_CAP_QDBM, TX_POWER_CAP_QDBM / 4.0, esp_err_to_name(serr),
+                 (int)got, got / 4.0, esp_err_to_name(gerr));
+    }
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;

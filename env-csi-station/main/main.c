@@ -10,6 +10,7 @@
  * WiFi 关联后 app_net→app_csi 开 CSI + 1Hz 网关 ping 激励（ACK 帧出样本）。
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -79,58 +80,108 @@ float station_csi_hz(void)
 }
 
 /* ---------------------------------------------------------------------------
- * 开机 WiFi 扫描行（SELFTEST 规范第三行）。APSTA 下扫描合法：IDF 会让
- * STA 临时离开信道扫完全信道再回（blink 家族既定行为，未配网也照扫）。
+ * 开机 WiFi 扫描行（SELFTEST 规范第三行）——必须是真实测量。
+ * 2026-11-11 发现：STA"正在关联"（含连接重试窗口）时驱动拒绝扫描
+ * （ESP_ERR_WIFI_STATE："STA is connecting, scan are not allowed!"），旧实现
+ * 不查返回值照打 aps=0——而 fleet 语义红线规定 aps=0=空口全聋，于是一块
+ * "有凭据但关联不上"的板子恒被误报为聋（本板台架上即被此假象误导）。
+ * 现行做法：
+ *   - 已关联：直接扫（APSTA 下合法，STA 临时离开信道扫完再回），不打断在网业务；
+ *   - 未关联：app_net_scan_hold(true) 占用 STA（中止关联尝试、断线处理器让路）
+ *     → 等 400ms 回空闲 → 扫描；扫完 app_net_scan_hold(false) 恢复关联；
+ *   - 最多试 3 次，逐次打返回值；失败等 800ms 再试；
+ *   - 3 次都失败打 aps=-1（=没测成；绝不冒充 aps=0）。
+ * aps 取 esp_wifi_scan_get_ap_num() 的真实总数（top/ours 仍只取最强 20 条，
+ * 与 n16r8/cam 参考实现同口径）。
  * ------------------------------------------------------------------------- */
 static void scan_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(3000)); /* 先让 STA 关联流程走起来 */
 
-    wifi_scan_config_t cfg = { 0 };
-    esp_wifi_scan_start(&cfg, true); /* 阻塞扫全信道 */
-
-    wifi_ap_record_t recs[20];
-    uint16_t n = 20;
-    if (esp_wifi_scan_get_ap_records(&n, recs) != ESP_OK) {
-        n = 0;
-    }
-    /* 返回已按 RSSI 降序：拼最强 5 条 "RSSI ch SSID"，"; " 连接 */
-    char top[256] = "";
-    for (int i = 0; i < n && i < 5; i++) {
-        char one[64];
-        snprintf(one, sizeof(one), "%s%d ch%d %.24s", i ? "; " : "",
-                 recs[i].rssi, recs[i].primary, (const char *)recs[i].ssid);
-        strlcat(top, one, sizeof(top));
+    wifi_ap_record_t ap;
+    const bool associated = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK);
+    if (!associated) {
+        app_net_scan_hold(true);
+        vTaskDelay(pdMS_TO_TICKS(400)); /* 等断线事件处理完、STA 回空闲 */
     }
 
-    /* ours：配置网 SSID=RSSI——关联中用关联 AP；否则用扫描里同名最强 BSS；
-     * 都没有则空（ssid 为空也空） */
-    char ours[64] = "";
-    char ssid[33] = "";
-    nvs_handle_t h;
-    if (nvs_open("wifi", NVS_READONLY, &h) == ESP_OK) {
-        size_t sl = sizeof(ssid);
-        if (nvs_get_str(h, "ssid", ssid, &sl) != ESP_OK) {
-            ssid[0] = '\0';
+    esp_err_t serr = ESP_FAIL;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        wifi_scan_config_t cfg = { 0 };
+        serr = esp_wifi_scan_start(&cfg, true); /* 阻塞扫全信道 */
+        ESP_LOGI(TAG, "自检扫描 %d/3：%s（STA=%s）", attempt,
+                 esp_err_to_name(serr), associated ? "已关联" : "未关联·已占用");
+        if (serr == ESP_OK) {
+            break;
         }
-        nvs_close(h);
+        if (attempt < 3) {
+            vTaskDelay(pdMS_TO_TICKS(800));
+        }
     }
-    if (ssid[0]) {
-        wifi_ap_record_t ap;
-        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-            snprintf(ours, sizeof(ours), "%s=%d", ssid, ap.rssi);
-        } else {
-            for (int i = 0; i < n; i++) {
-                if (strcmp((const char *)recs[i].ssid, ssid) == 0) {
-                    snprintf(ours, sizeof(ours), "%s=%d", ssid, recs[i].rssi);
-                    break;
+
+    char top[256] = "";
+    char ours[64] = "";
+    int aps = -1;
+    uint16_t n = 0;
+    if (serr == ESP_OK) {
+        uint16_t total = 0;
+        if (esp_wifi_scan_get_ap_num(&total) == ESP_OK) {
+            aps = total;
+        }
+        n = 20;
+        wifi_ap_record_t *recs = calloc(n, sizeof(*recs)); /* ~2KB，放堆不上任务栈 */
+        if (recs && esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+            /* 返回已按 RSSI 降序：拼最强 5 条 "RSSI ch SSID"，"; " 连接 */
+            for (int i = 0; i < n && i < 5; i++) {
+                char one[64];
+                snprintf(one, sizeof(one), "%s%d ch%d %.24s", i ? "; " : "",
+                         recs[i].rssi, recs[i].primary, (const char *)recs[i].ssid);
+                strlcat(top, one, sizeof(top));
+            }
+
+            /* ours：配置网 SSID=RSSI——关联中用关联 AP；否则用扫描里同名最强
+             * BSS；都没有则空（ssid 为空也空） */
+            char ssid[33] = "";
+            nvs_handle_t h;
+            if (nvs_open("wifi", NVS_READONLY, &h) == ESP_OK) {
+                size_t sl = sizeof(ssid);
+                if (nvs_get_str(h, "ssid", ssid, &sl) != ESP_OK) {
+                    ssid[0] = '\0';
+                }
+                nvs_close(h);
+            }
+            if (ssid[0]) {
+                if (associated && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                    snprintf(ours, sizeof(ours), "%s=%d", ssid, ap.rssi);
+                } else {
+                    for (int i = 0; i < n; i++) {
+                        if (strcmp((const char *)recs[i].ssid, ssid) == 0) {
+                            snprintf(ours, sizeof(ours), "%s=%d", ssid, recs[i].rssi);
+                            break;
+                        }
+                    }
                 }
             }
+        } else {
+            if (!recs) {
+                esp_wifi_clear_ap_list(); /* 记录没取就清掉，防驱动内滞留 */
+            }
+            n = 0;
         }
+        free(recs);
+        if (aps < 0) {
+            aps = n; /* get_ap_num 失败时退回已取到的条数 */
+        }
+    } else {
+        ESP_LOGW(TAG, "自检扫描 3 次均失败（%s）：打 aps=-1 = 没测成，不是空口全聋",
+                 esp_err_to_name(serr));
     }
-    ESP_LOGI(TAG, "SELFTEST: wifi aps=%u top=\"%s\" ours=\"%s\"",
-             (unsigned)n, top, ours);
+
+    if (!associated) {
+        app_net_scan_hold(false); /* 恢复关联流程 */
+    }
+    ESP_LOGI(TAG, "SELFTEST: wifi aps=%d top=\"%s\" ours=\"%s\"", aps, top, ours);
     vTaskDelete(NULL);
 }
 
