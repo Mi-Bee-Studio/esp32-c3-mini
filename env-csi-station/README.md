@@ -94,8 +94,12 @@ full power (20 dBm) with AUTH_EXPIRE, seen as an endless
 board (2026-11-08..11): at 20 dBm only 82 of roughly 50,000
 authentication requests got through and the board never joined, while
 reception was fine; at 8.5 dBm it associated on the first attempt and
-held for a 30-minute watch with zero drops. The cost is shorter range —
-raise the macro (max 80 = 20 dBm) for deployments far from the AP.
+stayed associated through a 30-minute watch (no disconnects). A
+concurrent LAN ping lost 70 of 1680 packets (about 4%, scattered with no
+outage bursts, 144 ms average with modem sleep on) — usable, not
+pristine, and longer-term stability is still to be watched. The cost is
+shorter range — raise the macro (max 80 = 20 dBm) for deployments far
+from the AP.
 
 ## Display layout (128x64, five zones)
 
