@@ -2,7 +2,10 @@
 # 板级信息见 ../README.zh.md；芯片 ESP32-C3FN4（4MB flash 片内封装），无 PSRAM
 CONFIG_IDF_TARGET="esp32c3"
 
-# 控制台走 ROM USB-CDC（SuperMini 原生 USB 无桥片、无 USB-Serial-JTAG 外设）
+# 控制台：USB-C 接 C3 片上 USB-Serial-JTAG（GPIO18/19，无外置桥片，VID_303A:PID_1001）。
+# 2026-11-12 更正：原注释"走 ROM USB-CDC、无 USB-Serial-JTAG 外设"有误。C3 无 USB-OTG，
+# 下行 CONFIG_ESP_CONSOLE_USB_CDC 并无对应 Kconfig 选项（不生效，暂保留不动）；实际生效
+# = UART 默认控制台 + USB-Serial-JTAG 次控制台，日志链路已验证。主控制台配置待统一调整。
 CONFIG_ESP_CONSOLE_USB_CDC=y
 
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

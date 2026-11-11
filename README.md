@@ -46,7 +46,7 @@ Key points of the convention:
 | SRAM | 400 KB (+ 384 KB ROM) |
 | PSRAM | None |
 | Wireless | 2.4 GHz WiFi b/g/n + Bluetooth 5 (LE) |
-| USB | Native USB Type-C — **ROM USB-CDC** (console + flashing; no bridge chip, no USB-Serial-JTAG peripheral) |
+| USB | Native USB Type-C — **on-chip USB-Serial-JTAG** (console + flashing; GPIO18/19, no external USB-UART bridge chip; enumerates as VID_303A:PID_1001) |
 | Onboard LED | **Blue LED @ GPIO8, active-LOW** (VSYS→5.1k→LED→GPIO8 with a 10k pull-up; plus a red power LED) |
 | Buttons | BOOT = GPIO9 (10k pull-up; hold + RESET for download mode), RESET |
 | Power | USB 5V, or external 3.3–6V on the 5V pad (ME6211 LDO; **USB and external power are mutually exclusive**) |
@@ -83,10 +83,13 @@ Key points:
 
 ## Caveats
 
-- **The console is ROM USB-CDC**: sdkconfig needs `CONFIG_ESP_CONSOLE_USB_CDC=y`
-  (blink/weather-clock still use the USB_SERIAL_JTAG option, which does not work on
-  this board — a known issue; env-csi-station is fixed, the older projects were left
-  untouched this round);
+- **The console is the on-chip USB-Serial-JTAG** (USB-C wired straight to GPIO18/19;
+  no external USB-UART bridge chip): `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` works on
+  this board — blink/weather-clock use it and print fine. Corrected 2026-11-12: the
+  earlier note here ("ROM USB-CDC, no USB-Serial-JTAG peripheral") was wrong. The C3
+  has no USB-OTG, so `CONFIG_ESP_CONSOLE_USB_CDC` has no matching Kconfig option;
+  env-csi-station effectively runs the default UART console with USB-Serial-JTAG as
+  the secondary console, visible on the same USB port;
 - Download mode: **hold BOOT (GPIO9) + tap RESET**; some cables/hosts need a re-plug retry;
 - **USB and external power are mutually exclusive** (no back-feed; don't plug USB while
   powering from the 5V pad);

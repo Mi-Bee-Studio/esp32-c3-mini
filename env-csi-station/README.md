@@ -55,9 +55,12 @@ idf.py set-target esp32c3
 idf.py build
 ```
 
-Console and flashing go over **ROM USB-CDC** (this board has no
-USB-Serial-JTAG peripheral; sdkconfig.defaults sets
-CONFIG_ESP_CONSOLE_USB_CDC=y). Flashing via the serialtap proxy:
+Console and flashing go over the **on-chip USB-Serial-JTAG** (USB-C wired
+straight to the peripheral on GPIO18/19 — no external USB-UART bridge
+chip; Windows enumerates it as VID_303A:PID_1001; the effective config is
+the default UART console with USB-Serial-JTAG as secondary — corrected
+2026-11-12, the earlier "ROM USB-CDC" note was wrong). Flashing via the
+serialtap proxy:
 
 ```bash
 serialtap flash <device> \

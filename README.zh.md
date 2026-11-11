@@ -46,7 +46,7 @@ esp32-c3-mini/
 | SRAM | 400KB（+ ROM 384KB） |
 | PSRAM | 无 |
 | 无线 | 2.4GHz WiFi b/g/n + Bluetooth 5 (LE) |
-| USB | 原生 USB Type-C —— **ROM USB-CDC**（控制台 + 烧录；无桥片、无 USB-Serial-JTAG 外设） |
+| USB | 原生 USB Type-C —— **片上 USB-Serial-JTAG**（控制台 + 烧录；GPIO18/19，无外置 USB-UART 桥片；枚举 VID_303A:PID_1001） |
 | 板载 LED | **蓝色 LED @GPIO8，低电平点亮**（VSYS→5.1k→LED→GPIO8，另有 10k 上拉；另有一颗电源红灯） |
 | 按键 | BOOT = GPIO9（10k 上拉；按住 + RESET 进下载模式）、RESET |
 | 供电 | USB 5V，或 5V 焊盘外部 3.3-6V（ME6211 LDO；**USB 与外部供电互斥**） |
@@ -83,9 +83,12 @@ esp32-c3-mini/
 
 ## 注意事项
 
-- **控制台是 ROM USB-CDC**：sdkconfig 需 `CONFIG_ESP_CONSOLE_USB_CDC=y`
-  （blink/weather-clock 现用 USB_SERIAL_JTAG 配置在本板无效——本仓已知问题，
-  env-csi-station 已修正，旧项目本轮未动）；
+- **控制台是片上 USB-Serial-JTAG**（USB-C 直连 GPIO18/19，无外置 USB-UART 桥片）：
+  `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` 在本板有效——blink/weather-clock 现用即此
+  配置，实测打印正常。2026-11-12 更正：此处原先"ROM USB-CDC、无 USB-Serial-JTAG
+  外设"的说法有误。C3 没有 USB-OTG，`CONFIG_ESP_CONSOLE_USB_CDC` 并无对应 Kconfig
+  选项；env-csi-station 实际生效的是 UART 默认控制台 + USB-Serial-JTAG 次控制台，
+  同一 USB 口可见；
 - 下载模式：**按住 BOOT（GPIO9）+ 短按 RESET**；个别线缆/主机需重插重试；
 - **USB 与外部供电互斥**（同时接可能倒灌，5V 焊盘供电时勿再插 USB）；
 - **GPIO8 = 板载蓝灯**（低电平点亮 + 10k 上拉）：作 I2C SDA 时蓝灯随流量微闪

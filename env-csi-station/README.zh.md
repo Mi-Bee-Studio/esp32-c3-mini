@@ -46,8 +46,9 @@ idf.py set-target esp32c3
 idf.py build
 ```
 
-控制台/烧录走 **ROM USB-CDC**（本板无 USB-Serial-JTAG 外设，
-sdkconfig.defaults 已设 CONFIG_ESP_CONSOLE_USB_CDC=y）。serialtap 代理烧录：
+控制台/烧录走 **片上 USB-Serial-JTAG**（USB-C 直连片上外设 GPIO18/19，无外置
+USB-UART 桥片，Windows 枚举 VID_303A:PID_1001；实际生效配置为 UART 默认控制台 +
+USB-Serial-JTAG 次控制台——2026-11-12 更正，原"ROM USB-CDC"说法有误）。serialtap 代理烧录：
 
 ```bash
 serialtap flash <设备> \
